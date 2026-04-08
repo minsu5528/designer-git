@@ -6,9 +6,9 @@
 
 namespace fs = std::filesystem;
 
-int init_repository(const std::string &root_path)
+int init_repository(const std::string &path)
 {
-    fs::path vcs = root_path + "/.vcs";
+    fs::path vcs = path + "/.vcs";
 
     // 이미 초기화된 경우 방어
     if (fs::exists(vcs))
