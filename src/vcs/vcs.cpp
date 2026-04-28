@@ -70,7 +70,8 @@ int save_commit_metadata(const std::string &repo_path, const CommitMetadata &met
     {
         j["files"].push_back({{"path", f.path},
                               {"delta", f.delta},
-                              {"is_base", f.is_base}});
+                              {"is_base", f.is_base},
+                              {"length",f.length}});
     }
 
     try
@@ -110,7 +111,8 @@ CommitMetadata load_commit_metadata(const std::string &repo_path, const std::str
     {
         meta.files.push_back({item["path"].get<std::string>(),
                               item["delta"].get<std::string>(),
-                              item.at("is_base").get<bool>()});
+                              item.at("is_base").get<bool>(),
+                              item["length"].get<uint64_t>()});
     }
 
     return meta;
@@ -170,12 +172,12 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     meta.message = message;
     meta.timestamp = get_current_timestamp();
 
-    // HEAD 파일에서 부모 ID 읽어오기
-    std::ifstream head_in(vcs_path / "HEAD");
-    std::getline(head_in, meta.parent_id);
-    head_in.close();
+    // 이미 위에서 읽은 parent_id 재사용
+    meta.parent_id = parent_id;
 
-    meta.files.push_back({target_file, "objects/deltas/" + delta_filename, false});
+    
+    uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+    meta.files.push_back({target_file, "objects/deltas/" + delta_filename, false, file_size});
 
     // 5. JSON 저장
     if (save_commit_metadata(repo_path, meta) == 0)
