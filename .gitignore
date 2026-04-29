@@ -42,3 +42,6 @@
 
 # VS Code 개인 설정
 .vscode/
+
+#vcpkg
+vcpkg/
