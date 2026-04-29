@@ -1,7 +1,7 @@
-# designer-git
+# designer_git
 3D·바이너리 파일 전용 오픈소스 버전관리 엔진 (공개SW프로젝트 2026)
 
-# designer-git
+# designer_git
 > 3D·바이너리 파일 전용 오픈소스 버전관리 엔진
 
 ## 프로젝트 소개

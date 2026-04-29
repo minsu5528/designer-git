@@ -168,7 +168,8 @@ int save_commit_metadata(const std::string &repo_path, const CommitMetadata &met
         j["files"].push_back({{"path", f.path},
                               {"delta", f.delta},
                               {"is_base", f.is_base},
-                              {"sha256", f.sha256}});
+                              {"sha256", f.sha256},
+                              {"length",f.length}});
     }
 
     try
@@ -216,6 +217,7 @@ CommitMetadata load_commit_metadata(const std::string &repo_path, const std::str
             fe.delta = item.at("delta").get<std::string>();
             fe.is_base = item.at("is_base").get<bool>();
             fe.sha256 = item.value("sha256", "");
+            fe.length  = item.value("length", uint64_t(0));
             meta.files.push_back(fe);
         }
 
@@ -275,7 +277,7 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     {
         fs::copy_file(target_file, base_file,
                       fs::copy_options::overwrite_existing);
-        meta.files.push_back({target_file, "", true, file_sha256});
+        meta.files.push_back({target_file, "", true, file_sha256, 0});
     }
     else
     {
@@ -290,8 +292,11 @@ std::string commit(const std::string &repo_path, const std::string &message, con
             std::cerr << "delta 생성 실패\n";
             return "";
         }
+     
+        // delta 커밋
+        uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
         meta.files.push_back(
-            {target_file, "objects/deltas/" + delta_filename, false, file_sha256});
+            {target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size});
     }
 
     // 6. JSON 저장 & HEAD 업데이트
@@ -305,6 +310,7 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     std::cout << "[" << commit_id.substr(0, 8) << "] " << message << "\n";
     return commit_id;
 }
+
 
 // checkout: 특정 시점으로 파일 복원--------
 int checkout(const std::string &repo_path, const std::string &commit_id)
