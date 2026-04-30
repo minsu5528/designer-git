@@ -419,6 +419,7 @@ std::string commit(const std::string &repo_path, const std::string &message, con
             return "";
         }
 
+        // delta 커밋
         uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
         meta.files.push_back(
             {target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size});

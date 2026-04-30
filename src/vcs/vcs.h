@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <cstdint>
 
 /**
  * init_repository
@@ -72,6 +73,7 @@ struct FileEntry
     std::string delta;  // delta 파일이나 base 파일의 저장 경로
     bool is_base;       // true면 base 파일, false면 delta 파일
     std::string sha256; // 파일 내용의 SHA-256 해시
+    uint64_t length;    // 파일 크기 (가변 블록 CDC 지원용)
 };
 
 // 커밋 메타데이터 구조체
