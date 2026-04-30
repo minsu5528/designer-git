@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include "json.hpp"
 #include "vcs.h"
 #include "../engine/delta.h"
@@ -15,7 +15,7 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-//  내부 헬퍼 함수
+//  내부 헬퍼 함수 ㅡㅡㅡㅡㅡㅡㅡㅡ
 // 현재 시각을 ISO 8601 문자열로 변환
 std::string get_current_timestamp()
 {
@@ -33,18 +33,37 @@ static std::string sha256_file(const fs::path &path)
     if (!f.is_open())
         return "";
 
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx)
+        return "";
+
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1)
+    {
+        EVP_MD_CTX_free(ctx);
+        return "";
+    }
 
     char buf[65536];
     while (f.read(buf, sizeof(buf)) || f.gcount() > 0)
-        SHA256_Update(&ctx, buf, static_cast<size_t>(f.gcount()));
+    {
+        if (EVP_DigestUpdate(ctx, buf, static_cast<size_t>(f.gcount())) != 1)
+        {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
+    }
 
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256_Final(digest, &ctx);
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    if (EVP_DigestFinal_ex(ctx, digest, &digest_len) != 1)
+    {
+        EVP_MD_CTX_free(ctx);
+        return "";
+    }
+    EVP_MD_CTX_free(ctx);
 
     std::ostringstream oss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
+    for (unsigned int i = 0; i < digest_len; ++i)
         oss << std::hex << std::setw(2) << std::setfill('0')
             << static_cast<int>(digest[i]);
     return oss.str();
@@ -65,6 +84,87 @@ static void write_head(const fs::path &vcs_path, const std::string &commit_id)
 {
     std::ofstream f(vcs_path / "HEAD");
     f << commit_id;
+}
+
+// 특정 커밋 시점의 파일 out_path에 복원
+static bool restore_file_at_commit(const std::string &repo_path,
+                                   const std::string &prev_commit_id,
+                                   const std::string &filename,
+                                   const fs::path &out_path)
+{
+    fs::path vcs_path = fs::path(repo_path) / ".vcs";
+
+    // prev_commit_id까지의 체인 구성
+    std::vector<std::string> chain;
+    std::string cur = prev_commit_id;
+    while (!cur.empty())
+    {
+        CommitMetadata m = load_commit_metadata(repo_path, cur);
+        if (m.id.empty())
+            return false;
+        chain.push_back(cur);
+        if (!m.files.empty() && m.files[0].is_base)
+            break;
+        cur = m.parent_id;
+    }
+    std::reverse(chain.begin(), chain.end());
+
+    fs::path base_file = vcs_path / "objects" / "base" / filename;
+    if (!fs::exists(base_file))
+        return false;
+
+    // base 커밋이 목표인 경우
+    if (chain.size() == 1)
+    {
+        fs::copy_file(base_file, out_path, fs::copy_options::overwrite_existing);
+        return true;
+    }
+
+    fs::path tmp_a = vcs_path / ("restore_a_" + prev_commit_id);
+    fs::path tmp_b = vcs_path / ("restore_b_" + prev_commit_id);
+    fs::copy_file(base_file, tmp_a, fs::copy_options::overwrite_existing);
+
+    for (size_t i = 1; i < chain.size(); ++i)
+    {
+        CommitMetadata cm = load_commit_metadata(repo_path, chain[i]);
+        if (cm.id.empty())
+        {
+            fs::remove(tmp_a);
+            return false;
+        }
+
+        std::string delta_rel;
+        for (const auto &entry : cm.files)
+        {
+            if (fs::path(entry.path).filename() == filename)
+            {
+                delta_rel = entry.delta;
+                break;
+            }
+        }
+        if (delta_rel.empty())
+            continue;
+
+        fs::path delta_path = vcs_path / delta_rel;
+        if (!fs::exists(delta_path))
+        {
+            fs::remove(tmp_a);
+            return false;
+        }
+
+        if (delta_apply(tmp_a.string().c_str(),
+                        delta_path.string().c_str(),
+                        tmp_b.string().c_str()) != 0)
+        {
+            fs::remove(tmp_a);
+            fs::remove(tmp_b);
+            return false;
+        }
+        fs::rename(tmp_b, tmp_a);
+    }
+
+    fs::rename(tmp_a, out_path);
+    return true;
 }
 
 // .vcs 폴더 구조 및 초기 설정 파일을 생성하는 함수
@@ -152,8 +252,8 @@ int add_file(const std::string &repo_path, const std::string &filepath)
 // 커밋 메타데이터를 .vcs/commits/[commit_id].json 형식으로 JSON 파일로 저장하는 함수
 int save_commit_metadata(const std::string &repo_path, const CommitMetadata &meta)
 {
-    fs::path commit_dir = fs::path(repo_path) / ".vcs" / "commits";
-    fs::path file_path = commit_dir / (meta.id + ".json");
+    fs::path file_path =
+        fs::path(repo_path) / ".vcs" / "commits" / (meta.id + ".json");
 
     json j;
     j["id"] = meta.id;
@@ -168,7 +268,8 @@ int save_commit_metadata(const std::string &repo_path, const CommitMetadata &met
         j["files"].push_back({{"path", f.path},
                               {"delta", f.delta},
                               {"is_base", f.is_base},
-                              {"sha256", f.sha256}});
+                              {"sha256", f.sha256},
+                              {"length", f.length}});
     }
 
     try
@@ -216,6 +317,7 @@ CommitMetadata load_commit_metadata(const std::string &repo_path, const std::str
             fe.delta = item.at("delta").get<std::string>();
             fe.is_base = item.at("is_base").get<bool>();
             fe.sha256 = item.value("sha256", "");
+            fe.length = item.value("length", uint64_t(0));
             meta.files.push_back(fe);
         }
 
@@ -267,34 +369,62 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     meta.parent_id = parent_id;
     meta.sha256 = file_sha256;
 
-    // 4. base 없으면 최초 커밋: 파일을 base에 복사
     fs::path base_file = vcs_path / "objects" / "base" /
                          fs::path(target_file).filename();
 
+    // 4. 최초 커밋: base에 파일 통째로 복사
     if (!fs::exists(base_file))
     {
         fs::copy_file(target_file, base_file,
                       fs::copy_options::overwrite_existing);
-        meta.files.push_back({target_file, "", true, file_sha256});
+        uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+        meta.files.push_back({target_file, "", true, file_sha256, file_size});
     }
     else
     {
-        // 5. delta 생성
+        // 직전 커밋 파일 기준으로 delta 생성
         std::string delta_filename = commit_id + ".delta";
         fs::path delta_path = vcs_path / "objects" / "deltas" / delta_filename;
 
-        if (delta_create(base_file.string().c_str(),
-                         target_file.c_str(),
-                         delta_path.string().c_str()) != 0)
+        fs::path prev_file;
+
+        if (parent_id.empty())
+        {
+            prev_file = base_file;
+        }
+        else
+        {
+            // 직전 커밋 시점의 파일을 임시 경로에 복원
+            prev_file = vcs_path / ("prev_" + commit_id);
+            std::string filename = fs::path(target_file).filename().string();
+
+            if (!restore_file_at_commit(repo_path, parent_id, filename, prev_file))
+            {
+                std::cerr << "직전 커밋 파일 복원 실패\n";
+                return "";
+            }
+        }
+
+        int ret = delta_create(prev_file.string().c_str(),
+                               target_file.c_str(),
+                               delta_path.string().c_str());
+
+        // 임시 복원 파일 정리
+        if (!parent_id.empty() && fs::exists(prev_file))
+            fs::remove(prev_file);
+
+        if (ret != 0)
         {
             std::cerr << "delta 생성 실패\n";
             return "";
         }
+
+        uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
         meta.files.push_back(
-            {target_file, "objects/deltas/" + delta_filename, false, file_sha256});
+            {target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size});
     }
 
-    // 6. JSON 저장 & HEAD 업데이트
+    // 5. JSON 저장 & HEAD 업데이트
     if (save_commit_metadata(repo_path, meta) != 0)
     {
         std::cerr << "커밋 메타데이터 저장 실패\n";
