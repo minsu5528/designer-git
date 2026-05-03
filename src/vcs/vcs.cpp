@@ -388,6 +388,12 @@ std::string commit(const std::string &repo_path, const std::string &message, con
 
         fs::path prev_file;
 
+        /* parent_id가 비어 있는 경우:
+           base 파일은 이미 존재하지만(.vcs/objects/base/), 아직 커밋 JSON이 하나도 없는 상태
+           이 커밋이 "base 파일과 현재 작업본" 사이의 첫 번째 delta를 만드는 케이스
+           parent_id가 있는 분기로 들어가면 restore_file_at_commit()이 parent_id를 따라가다
+           JSON을 못 찾아 실패하므로, base 파일 자체를 비교 기준으로 사용한다.
+        */
         if (parent_id.empty())
         {
             prev_file = base_file;
@@ -409,7 +415,10 @@ std::string commit(const std::string &repo_path, const std::string &message, con
                                target_file.c_str(),
                                delta_path.string().c_str());
 
-        // 임시 복원 파일 정리
+        /* parent_id가 비어 있으면 위의 분기에서 prev_file = base_file 을 그대로
+         가리키고 있으므로, 임시 복원 파일이 생성된 적이 없다. 즉, 삭제 대상이 없다.
+         parent_id가 있을 때만 restore_file_at_commit()이 임시 파일을 만들었으므로 해당 경우에만 정리한다.
+        */
         if (!parent_id.empty() && fs::exists(prev_file))
             fs::remove(prev_file);
 
@@ -448,7 +457,7 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
         return -1;
     }
 
-    // 1. 목표 커밋 메타데이터 로드
+    // 1. 목표 커밋 메타데parent_id가 있는 분기로 들어가면이터 로드
     CommitMetadata target = load_commit_metadata(repo_path, commit_id);
     if (target.id.empty())
     {
