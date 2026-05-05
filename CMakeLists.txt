@@ -9,6 +9,7 @@ add_executable(dgit
     src/cli/main.cpp
     src/vcs/vcs.cpp
     src/engine/delta.cpp
+    src/engine/format.cpp
 )
 
 target_include_directories(dgit PRIVATE
