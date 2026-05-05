@@ -110,32 +110,37 @@ bool should_use_full_copy(const std::string& prev_path,
 
     uint64_t file_size = std::min(prev_size, curr_size);
 
-    // 샘플링 구간 3개: 앞 / 중간 / 뒤
-    uint64_t mid_offset  = (file_size / 2 > SAMPLE_REGION)
-                           ? file_size / 2 - SAMPLE_REGION / 2 : 0;
-    uint64_t tail_offset = (file_size > SAMPLE_REGION)
-                           ? file_size - SAMPLE_REGION : 0;
-
     size_t changed = 0;
     size_t total   = 0;
 
-    // 앞 구간
-    auto count_region = [&](uint64_t offset) {
-        uint64_t region = std::min(static_cast<uint64_t>(SAMPLE_REGION), file_size);
-        size_t blocks = (region + SAMPLE_BLOCK - 1) / SAMPLE_BLOCK;
-        changed += count_changed_blocks(prev_f, curr_f, offset, region);
+    // 파일이 300MB보다 작으면 전체를 한 번만 샘플링
+    if (file_size < SAMPLE_REGION * 3)
+    {
+        size_t blocks = (file_size + SAMPLE_BLOCK - 1) / SAMPLE_BLOCK;
+        changed += count_changed_blocks(prev_f, curr_f, 0, file_size);
         total   += blocks;
-    };
+    }
+    else
+    {
+        uint64_t mid_offset  = file_size / 2 - SAMPLE_REGION / 2;
+        uint64_t tail_offset = file_size - SAMPLE_REGION;
 
-    count_region(0);
-    count_region(mid_offset);
-    count_region(tail_offset);
+        auto count_region = [&](uint64_t offset) {
+            size_t blocks = (SAMPLE_REGION + SAMPLE_BLOCK - 1) / SAMPLE_BLOCK;
+            changed += count_changed_blocks(prev_f, curr_f, offset, SAMPLE_REGION);
+            total   += blocks;
+        };
+
+        count_region(0);
+        count_region(mid_offset);
+        count_region(tail_offset);
+    }
 
     if (total == 0)
         return false;
 
     double change_ratio = static_cast<double>(changed) /
-                          static_cast<double>(total);
+                        static_cast<double>(total);
 
     return change_ratio >= threshold;
 }

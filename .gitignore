@@ -45,3 +45,8 @@
 
 #vcpkg
 vcpkg/
+
+src/engine/test_*.bin
+src/engine/test_*.delta
+src/engine/test_delta.exe
+src/engine/test.delta
