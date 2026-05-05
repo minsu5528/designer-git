@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-// VCS ���� ������ �Լ����� ����ϱ� ���� ��� ���� ����
+// VCS 엔진 계층의 함수들을 사용하기 위한 헤더 파일 포함
 #include "../vcs/vcs.h"
 
 #include "../engine/format.h"
@@ -13,17 +13,17 @@ namespace fs = std::filesystem;
 
 namespace {
 
-    // ���� �۾� ���� ���丮�� ���� ��θ� ��ȯ�ϴ� �Լ�
+    // 현재 작업 중인 디렉토리의 절대 경로를 반환하는 함수
     std::string current_repo_path() {
         return fs::current_path().string();
     }
 
-    // ������ ��ο� ".vcs" ������ �����ϴ��� Ȯ���Ͽ� dgit ����� ���θ� �Ǻ��ϴ� �Լ�
+    // 지정된 경로에 ".vcs" 폴더가 존재하는지 확인하여 dgit 저장소 여부를 판별하는 함수
     bool is_dgit_repository(const std::string& repo_path) {
         return fs::exists(fs::path(repo_path) / ".vcs");
     }
 
-    // ����ڰ� 'dgit'�� �Է��ϰų� '--help'�� �Է����� �� ��µǴ� ��ü ����
+    // 사용자가 'dgit'만 입력하거나 '--help'를 입력했을 때 출력되는 전체 도움말
     void print_general_help() {
         std::cout
             << "usage: dgit <command> [<args>]\n\n"
@@ -37,7 +37,7 @@ namespace {
             << "Use 'dgit <command> --help' for more information on a command.\n";
     }
 
-    // Ư�� ���ɾ�(��: 'dgit commit --help')�� ���� �� ������ ����ϴ� �Լ�
+    // 특정 명령어(예: 'dgit commit --help')에 대한 상세 도움말을 출력하는 함수
     void print_command_help(const std::string& command) {
         if (command == "init") {
             std::cout << "usage: dgit init\n\n"
@@ -68,21 +68,21 @@ namespace {
         }
     }
 
-    // �ش� ���ɾ ����Ǳ� ���� �����(.vcs ����)�� �ݵ�� �����ؾ� �ϴ��� ���θ� ��ȯ
+    // 해당 명령어가 실행되기 전에 저장소(.vcs 폴더)가 반드시 존재해야 하는지 여부를 반환
     bool needs_repository(const std::string& command) {
         return command == "add" || command == "commit" || command == "log" ||
             command == "checkout" || command == "diff";
     }
 
-    // �߸��� ���ɾ� ���ڰ� ������ �� ���� �޽����� �ùٸ� ������ ����ϰ� ���� �ڵ�(1)�� ��ȯ
+    // 잘못된 명령어 인자가 들어왔을 때 에러 메시지와 올바른 사용법을 출력하고 에러 코드(1)를 반환
     int fail_usage(const std::string& message, const std::string& usage) {
         std::cerr << "dgit: " << message << "\n";
         std::cerr << "usage: " << usage << "\n";
         return 1;
     }
 
-    // "commit", "-m", "hello", "world" ó�� �и��� ���� �迭�� 
-    // "hello world" �ϳ��� ���Ⱑ ���Ե� ���ڿ��� �����ִ� ��ƿ��Ƽ �Լ�
+    // "commit", "-m", "hello", "world" 처럼 분리된 인자 배열을 
+    // "hello world" 하나의 띄어쓰기가 포함된 문자열로 합쳐주는 유틸리티 함수
     std::string join_args(const std::vector<std::string>& args, std::size_t start) {
         std::string result;
         for (std::size_t i = start; i < args.size(); ++i) {
@@ -94,7 +94,7 @@ namespace {
         return result;
     }
 
-    // .vcs/index ������ �о� ù ��°�� ���� ���� ������ �̸��� ��ȯ�ϴ� �Լ�
+    // .vcs/index 파일을 읽어 첫 번째로 추적 중인 파일의 이름을 반환하는 함수
     std::string read_tracked_file(const std::string& repo_path) {
         const fs::path index_path = fs::path(repo_path) / ".vcs" / "index";
         std::ifstream index_file(index_path);
@@ -105,7 +105,7 @@ namespace {
 
         std::string line;
         while (std::getline(index_file, line)) {
-            // Windows ȯ���� ���� ����(\r) ó��
+            // Windows 환경의 개행 문자(\r) 처리
             if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
@@ -117,7 +117,7 @@ namespace {
         return "";
     }
 
-    // 'dgit init' ���ɾ� ó��
+    // 'dgit init' 명령어 처리
     int handle_init(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("init");
@@ -127,7 +127,7 @@ namespace {
             return fail_usage("init takes no arguments", "dgit init");
         }
 
-        // VCS ���̾��� �ʱ�ȭ �Լ� ȣ��
+        // VCS 레이어의 초기화 함수 호출
         const int result = init_repository(repo_path);
         if (result != 0) {
             std::cerr << "fatal: dgit repository already exists or could not be initialized\n";
@@ -138,7 +138,7 @@ namespace {
         return 0;
     }
 
-    // 'dgit add <file>' ���ɾ� ó��
+    // 'dgit add <file>' 명령어 처리
     int handle_add(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("add");
@@ -154,19 +154,19 @@ namespace {
         const std::string filepath = args[2];
         const fs::path file_path(filepath);
 
-        // ���� ���� ���� �˻�
+        // 파일 존재 여부 검사
         if (!fs::exists(file_path)) {
             std::cerr << "fatal: pathspec '" << filepath << "' did not match any files\n";
             return 1;
         }
-        // ������ �߰��Ϸ��� �õ��ϴ� ��� ���� ó�� (���� MVP ���� �ƴ�)
+        // 폴더를 추가하려고 시도하는 경우 에러 처리 (현재 MVP 범위 아님)
         if (fs::is_directory(file_path)) {
             std::cerr << "fatal: pathspec '" << filepath
                 << "' is a directory; this MVP accepts exactly one file\n";
             return 1;
         }
 
-        // VCS ���̾��� add_file �Լ� ȣ��
+        // VCS 레이어의 add_file 함수 호출
         const int result = add_file(repo_path, filepath);
         if (result != 0) {
             std::cerr << "fatal: failed to add '" << filepath << "'\n";
@@ -177,13 +177,13 @@ namespace {
         return 0;
     }
 
-    // 'dgit commit -m "message"' ���ɾ� ó��
+    // 'dgit commit -m "message"' 명령어 처리
     int handle_commit(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("commit");
             return 0;
         }
-        // �ʼ� �ɼ� �˻�
+        // 필수 옵션 검사
         if (args.size() < 4) {
             return fail_usage("switch 'm' requires a value", "dgit commit -m <message>");
         }
@@ -196,7 +196,7 @@ namespace {
             return fail_usage("empty commit message", "dgit commit -m <message>");
         }
 
-        // ���� ���� ������ �ִ��� Ȯ��
+        // 추적 중인 파일이 있는지 확인
         const std::string target_file = read_tracked_file(repo_path);
         if (target_file.empty()) {
             std::cerr << "fatal: no tracked files. Use 'dgit add <file>' first.\n";
@@ -213,19 +213,19 @@ namespace {
             std::cout << "note: binary delta will be created\n";
         }   
 
-        // VCS ���̾��� commit �Լ� ȣ�� �� ���(commit_id) ��ȯ
+        // VCS 레이어의 commit 함수 호출 및 결과(commit_id) 반환
         const std::string commit_id = commit(repo_path, message, target_file);
         if (commit_id.empty()) {
             std::cerr << "fatal: failed to create commit\n";
             return 1;
         }
 
-        // ���� �� ª�� �ؽð�(�� 8�ڸ�)�� �޽��� ���
+        // 성공 시 짧은 해시값(앞 8자리)과 메시지 출력
         std::cout << "[dgit " << commit_id.substr(0, 8) << "] " << message << "\n";
         return 0;
     }
 
-    // 'dgit log' ���ɾ� ó��
+    // 'dgit log' 명령어 처리
     int handle_log(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("log");
@@ -235,12 +235,12 @@ namespace {
             return fail_usage("log takes no arguments", "dgit log");
         }
 
-        // VCS ���̾��� log �Լ� ȣ�� (���ο��� ��ü������ ��� ���)
+        // VCS 레이어의 log 함수 호출 (내부에서 자체적으로 출력 담당)
         log(repo_path);
         return 0;
     }
 
-    // 'dgit checkout <commit_id>' ���ɾ� ó��
+    // 'dgit checkout <commit_id>' 명령어 처리
     int handle_checkout(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("checkout");
@@ -255,7 +255,7 @@ namespace {
 
         const std::string commit_id = args[2];
 
-        // VCS ���̾��� checkout �Լ� ȣ��
+        // VCS 레이어의 checkout 함수 호출
         const int result = checkout(repo_path, commit_id);
         if (result != 0) {
             std::cerr << "fatal: reference is not a commit: " << commit_id << "\n";
@@ -266,7 +266,7 @@ namespace {
         return 0;
     }
 
-    // 'dgit diff' ���ɾ� ó�� (MVP �ܰ迡���� �������̽��� ����)
+    // 'dgit diff' 명령어 처리 (MVP 단계에서는 인터페이스만 제공)
     int handle_diff(const std::vector<std::string>& args) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("diff");
@@ -282,27 +282,27 @@ namespace {
 
 }  // namespace
 
-// ���α׷��� ���� ������
+// 프로그램의 메인 진입점
 int main(int argc, char* argv[]) {
-    // �ü���� ������ ���� �迭(argv)�� C++ ����(vector)�� ��ȯ�Ͽ� ����ϱ� ���ϰ� ����
+    // 운영체제가 전달한 인자 배열(argv)을 C++ 벡터(vector)로 변환하여 사용하기 편하게 만듦
     const std::vector<std::string> args(argv, argv + argc);
 
-    // ���ڰ� �ƹ��͵� ���� 'dgit'�� �ԷµǾ��� ��
+    // 인자가 아무것도 없이 'dgit'만 입력되었을 때
     if (argc == 1) {
         print_general_help();
         return 1;
     }
 
-    // ù ��° ����(��: init, commit) ����
+    // 첫 번째 인자(예: init, commit) 추출
     const std::string command = args[1];
 
-    // ��ü ���� ��û ó��
+    // 전체 도움말 요청 처리
     if (command == "--help" || command == "help") {
         print_general_help();
         return 0;
     }
 
-    // Ư�� ���ɾ ���� ���� ��û ó�� (��: dgit add --help)
+    // 특정 명령어에 대한 도움말 요청 처리 (예: dgit add --help)
     if (args.size() == 3 && args[2] == "--help") {
         print_command_help(command);
         return 0;
@@ -310,13 +310,13 @@ int main(int argc, char* argv[]) {
 
     const std::string repo_path = current_repo_path();
 
-    // init ���ɾ �����ϰ��� �׻� .vcs ������ �����ϴ��� ���� Ȯ��
+    // init 명령어를 제외하고는 항상 .vcs 폴더가 존재하는지 먼저 확인
     if (needs_repository(command) && !is_dgit_repository(repo_path)) {
         std::cerr << "fatal: not a dgit repository (or any of the parent directories): .vcs\n";
         return 1;
     }
 
-    // �Էµ� ���ɾ ���� �ش�Ǵ� �ڵ鷯 �Լ��� ���� (�����)
+    // 입력된 명령어에 따라 해당되는 핸들러 함수로 연결 (라우팅)
     if (command == "init") {
         return handle_init(args, repo_path);
     }
@@ -336,7 +336,7 @@ int main(int argc, char* argv[]) {
         return handle_diff(args);
     }
 
-    // ������ ���ǵ��� ���� ���ɾ �ԷµǾ��� ���� ���� ó��
+    // 사전에 정의되지 않은 명령어가 입력되었을 때의 예외 처리
     std::cerr << "dgit: '" << command << "' is not a dgit command. See 'dgit --help'.\n";
     return 1;
 }
