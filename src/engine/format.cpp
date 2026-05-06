@@ -2,6 +2,7 @@
 #include <fstream>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 
 static const size_t SAMPLE_BLOCK = 16 * 1024;        // 16KB 블록 단위
 static const size_t SAMPLE_REGION = 100 * 1024 * 1024; // 100MB 구간
@@ -32,7 +33,10 @@ bool is_compressed_format(const std::string& filepath)
     // 헤더 16바이트 읽기
     std::ifstream f(filepath, std::ios::binary);
     if (!f.is_open())
+    {
+        std::cerr << "format: failed to open file: " << filepath << "\n";
         return false;
+    }
 
     uint8_t header[HEADER_SIZE] = {};
     f.read(reinterpret_cast<char*>(header), HEADER_SIZE);
@@ -132,8 +136,10 @@ bool should_use_full_copy(const std::string& prev_path,
         };
 
         count_region(0);
-        count_region(mid_offset);
-        count_region(tail_offset);
+        if (mid_offset >= SAMPLE_REGION)
+            count_region(mid_offset);
+        if (tail_offset >= mid_offset + SAMPLE_REGION)
+            count_region(tail_offset);
     }
 
     if (total == 0)
