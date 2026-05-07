@@ -13,7 +13,6 @@
 #include "../engine/delta.h"
 #include "../engine/format.h"
 
-
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -89,26 +88,28 @@ static void write_head(const fs::path &vcs_path, const std::string &commit_id)
 }
 
 // 현재 커밋이 몇 번째인지 체인 길이로 계산
-static int count_commit_depth(const std::string& repo_path,
-                               const std::string& commit_id)
+static int count_commit_depth(const std::string &repo_path,
+                              const std::string &commit_id)
 {
     int depth = 0;
     std::string cur = commit_id;
     while (!cur.empty())
     {
         CommitMetadata m = load_commit_metadata(repo_path, cur);
-        if (m.id.empty()) break;
+        if (m.id.empty())
+            break;
         ++depth;
-        if (!m.files.empty() && m.files[0].is_base) break;
+        if (!m.files.empty() && m.files[0].is_base)
+            break;
         cur = m.parent_id;
     }
     return depth;
 }
 
 // 스냅샷 저장
-static void save_snapshot(const fs::path& vcs_path,
-                           const std::string& commit_id,
-                           const std::string& target_file)
+static void save_snapshot(const fs::path &vcs_path,
+                          const std::string &commit_id,
+                          const std::string &target_file)
 {
     fs::path snap_path = vcs_path / "objects" / "snapshots" /
                          (commit_id + ".snap");
@@ -118,9 +119,9 @@ static void save_snapshot(const fs::path& vcs_path,
 
 // 체인 역추적하며 가장 가까운 스냅샷 찾기
 // 반환값: 스냅샷 커밋 ID (없으면 빈 문자열)
-static std::string find_nearest_snapshot(const std::string& repo_path,
-                                          const fs::path& vcs_path,
-                                          const std::string& commit_id)
+static std::string find_nearest_snapshot(const std::string &repo_path,
+                                         const fs::path &vcs_path,
+                                         const std::string &commit_id)
 {
     std::string cur = commit_id;
     while (!cur.empty())
@@ -130,13 +131,14 @@ static std::string find_nearest_snapshot(const std::string& repo_path,
             return cur;
 
         CommitMetadata m = load_commit_metadata(repo_path, cur);
-        if (m.id.empty()) break;
-        if (!m.files.empty() && m.files[0].is_base) break;
+        if (m.id.empty())
+            break;
+        if (!m.files.empty() && m.files[0].is_base)
+            break;
         cur = m.parent_id;
     }
     return "";
 }
-
 
 // 특정 커밋 시점의 파일 out_path에 복원
 static bool restore_file_at_commit(const std::string &repo_path,
@@ -438,7 +440,7 @@ std::string commit(const std::string &repo_path, const std::string &message, con
         if (is_compressed_format(target_file))
         {
             fs::copy_file(target_file, base_file,
-                      fs::copy_options::overwrite_existing);
+                          fs::copy_options::overwrite_existing);
             uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
             meta.files.push_back({target_file, "", true, file_sha256, file_size});
         }
@@ -473,22 +475,24 @@ std::string commit(const std::string &repo_path, const std::string &message, con
                 }
             }
 
-                    // 사전 샘플링 — 변경률 높으면 전체 저장으로 전환
+            // 사전 샘플링 — 변경률 높으면 전체 저장으로 전환
             if (should_use_full_copy(prev_file.string(), target_file))
             {
                 if (!parent_id.empty() && fs::exists(prev_file))
                     fs::remove(prev_file);
 
-                fs::copy_file(target_file, base_file,
+                std::string fc_filename = commit_id + ".fullcopy";
+                fs::path fc_path = vcs_path / "objects" / "snapshots" / fc_filename;
+                fs::copy_file(target_file, fc_path,
                               fs::copy_options::overwrite_existing);
                 uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
-                meta.files.push_back({target_file, "", true, file_sha256, file_size});
+                meta.files.push_back({target_file, "objects/snapshots/" + fc_filename, true, file_sha256, file_size});
             }
             else
             {
                 int ret = delta_create(prev_file.string().c_str(),
-                                        target_file.c_str(),
-                                        delta_path.string().c_str());
+                                       target_file.c_str(),
+                                       delta_path.string().c_str());
 
                 /* parent_id가 비어 있으면 위의 분기에서 prev_file = base_file 을 그대로
                 가리키고 있으므로, 임시 복원 파일이 생성된 적이 없다.즉, 삭제 대상이 없다.
@@ -567,7 +571,8 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
             chain.push_back(cur);
 
             // 스냅샷 있으면 거기서 중단, 없으면 base까지
-            if (cur == snap_commit_id) break;
+            if (cur == snap_commit_id)
+                break;
             // base 커밋(is_base == true)에 도달하면 중단
             if (!m.files.empty() && m.files[0].is_base)
                 break;
@@ -591,7 +596,18 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
         // 최초 커밋(is_base) checkout: base 파일 그대로 복사
         if (fe.is_base)
         {
-            fs::copy_file(base_file, fe.path,
+            fs::path src_file;
+            if (!fe.delta.empty())
+                src_file = vcs_path / fe.delta; // fullcopy 경로
+            else
+                src_file = base_file; // 최초 base
+
+            if (!fs::exists(src_file))
+            {
+                std::cerr << "복원 원본 파일 없음: " << src_file << "\n";
+                return -1;
+            }
+            fs::copy_file(src_file, fe.path,
                           fs::copy_options::overwrite_existing);
         }
         else
@@ -600,7 +616,6 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
             // tmp_a: 현재 복원 중간 결과, tmp_b: delta 적용 후 출력
             fs::path tmp_a = vcs_path / ("tmp_a_" + commit_id);
             fs::path tmp_b = vcs_path / ("tmp_b_" + commit_id);
-
 
             // 스냅샷 있으면 스냅샷에서 시작, 없으면 base에서 시작
             fs::path start_file;
