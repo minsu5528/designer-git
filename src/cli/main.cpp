@@ -4,24 +4,26 @@
 #include <string>
 #include <vector>
 
-// VCS ¿£Áø °èÃşÀÇ ÇÔ¼öµéÀ» »ç¿ëÇÏ±â À§ÇÑ Çì´õ ÆÄÀÏ Æ÷ÇÔ
+// VCS ì—”ì§„ ê³„ì¸µì˜ í•¨ìˆ˜ë“¤ì„ ì‚¬ìš©í•˜ê¸° ìœ„í•œ í—¤ë” íŒŒì¼ í¬í•¨
 #include "../vcs/vcs.h"
+
+#include "../engine/format.h"
 
 namespace fs = std::filesystem;
 
 namespace {
 
-    // ÇöÀç ÀÛ¾÷ ÁßÀÎ µğ·ºÅä¸®ÀÇ Àı´ë °æ·Î¸¦ ¹İÈ¯ÇÏ´Â ÇÔ¼ö
+    // í˜„ì¬ ì‘ì—… ì¤‘ì¸ ë””ë ‰í† ë¦¬ì˜ ì ˆëŒ€ ê²½ë¡œë¥¼ ë°˜í™˜í•˜ëŠ” í•¨ìˆ˜
     std::string current_repo_path() {
         return fs::current_path().string();
     }
 
-    // ÁöÁ¤µÈ °æ·Î¿¡ ".vcs" Æú´õ°¡ Á¸ÀçÇÏ´ÂÁö È®ÀÎÇÏ¿© dgit ÀúÀå¼Ò ¿©ºÎ¸¦ ÆÇº°ÇÏ´Â ÇÔ¼ö
+    // ì§€ì •ëœ ê²½ë¡œì— ".vcs" í´ë”ê°€ ì¡´ì¬í•˜ëŠ”ì§€ í™•ì¸í•˜ì—¬ dgit ì €ì¥ì†Œ ì—¬ë¶€ë¥¼ íŒë³„í•˜ëŠ” í•¨ìˆ˜
     bool is_dgit_repository(const std::string& repo_path) {
         return fs::exists(fs::path(repo_path) / ".vcs");
     }
 
-    // »ç¿ëÀÚ°¡ 'dgit'¸¸ ÀÔ·ÂÇÏ°Å³ª '--help'¸¦ ÀÔ·ÂÇßÀ» ¶§ Ãâ·ÂµÇ´Â ÀüÃ¼ µµ¿ò¸»
+    // ì‚¬ìš©ìê°€ 'dgit'ë§Œ ì…ë ¥í•˜ê±°ë‚˜ '--help'ë¥¼ ì…ë ¥í–ˆì„ ë•Œ ì¶œë ¥ë˜ëŠ” ì „ì²´ ë„ì›€ë§
     void print_general_help() {
         std::cout
             << "usage: dgit <command> [<args>]\n\n"
@@ -35,7 +37,7 @@ namespace {
             << "Use 'dgit <command> --help' for more information on a command.\n";
     }
 
-    // Æ¯Á¤ ¸í·É¾î(¿¹: 'dgit commit --help')¿¡ ´ëÇÑ »ó¼¼ µµ¿ò¸»À» Ãâ·ÂÇÏ´Â ÇÔ¼ö
+    // íŠ¹ì • ëª…ë ¹ì–´(ì˜ˆ: 'dgit commit --help')ì— ëŒ€í•œ ìƒì„¸ ë„ì›€ë§ì„ ì¶œë ¥í•˜ëŠ” í•¨ìˆ˜
     void print_command_help(const std::string& command) {
         if (command == "init") {
             std::cout << "usage: dgit init\n\n"
@@ -66,21 +68,21 @@ namespace {
         }
     }
 
-    // ÇØ´ç ¸í·É¾î°¡ ½ÇÇàµÇ±â Àü¿¡ ÀúÀå¼Ò(.vcs Æú´õ)°¡ ¹İµå½Ã Á¸ÀçÇØ¾ß ÇÏ´ÂÁö ¿©ºÎ¸¦ ¹İÈ¯
+    // í•´ë‹¹ ëª…ë ¹ì–´ê°€ ì‹¤í–‰ë˜ê¸° ì „ì— ì €ì¥ì†Œ(.vcs í´ë”)ê°€ ë°˜ë“œì‹œ ì¡´ì¬í•´ì•¼ í•˜ëŠ”ì§€ ì—¬ë¶€ë¥¼ ë°˜í™˜
     bool needs_repository(const std::string& command) {
         return command == "add" || command == "commit" || command == "log" ||
             command == "checkout" || command == "diff";
     }
 
-    // Àß¸øµÈ ¸í·É¾î ÀÎÀÚ°¡ µé¾î¿ÔÀ» ¶§ ¿¡·¯ ¸Ş½ÃÁö¿Í ¿Ã¹Ù¸¥ »ç¿ë¹ıÀ» Ãâ·ÂÇÏ°í ¿¡·¯ ÄÚµå(1)¸¦ ¹İÈ¯
+    // ì˜ëª»ëœ ëª…ë ¹ì–´ ì¸ìê°€ ë“¤ì–´ì™”ì„ ë•Œ ì—ëŸ¬ ë©”ì‹œì§€ì™€ ì˜¬ë°”ë¥¸ ì‚¬ìš©ë²•ì„ ì¶œë ¥í•˜ê³  ì—ëŸ¬ ì½”ë“œ(1)ë¥¼ ë°˜í™˜
     int fail_usage(const std::string& message, const std::string& usage) {
         std::cerr << "dgit: " << message << "\n";
         std::cerr << "usage: " << usage << "\n";
         return 1;
     }
 
-    // "commit", "-m", "hello", "world" Ã³·³ ºĞ¸®µÈ ÀÎÀÚ ¹è¿­À» 
-    // "hello world" ÇÏ³ªÀÇ ¶ç¾î¾²±â°¡ Æ÷ÇÔµÈ ¹®ÀÚ¿­·Î ÇÕÃÄÁÖ´Â À¯Æ¿¸®Æ¼ ÇÔ¼ö
+    // "commit", "-m", "hello", "world" ì²˜ëŸ¼ ë¶„ë¦¬ëœ ì¸ì ë°°ì—´ì„ 
+    // "hello world" í•˜ë‚˜ì˜ ë„ì–´ì“°ê¸°ê°€ í¬í•¨ëœ ë¬¸ìì—´ë¡œ í•©ì³ì£¼ëŠ” ìœ í‹¸ë¦¬í‹° í•¨ìˆ˜
     std::string join_args(const std::vector<std::string>& args, std::size_t start) {
         std::string result;
         for (std::size_t i = start; i < args.size(); ++i) {
@@ -92,7 +94,7 @@ namespace {
         return result;
     }
 
-    // .vcs/index ÆÄÀÏÀ» ÀĞ¾î Ã¹ ¹øÂ°·Î ÃßÀû ÁßÀÎ ÆÄÀÏÀÇ ÀÌ¸§À» ¹İÈ¯ÇÏ´Â ÇÔ¼ö
+    // .vcs/index íŒŒì¼ì„ ì½ì–´ ì²« ë²ˆì§¸ë¡œ ì¶”ì  ì¤‘ì¸ íŒŒì¼ì˜ ì´ë¦„ì„ ë°˜í™˜í•˜ëŠ” í•¨ìˆ˜
     std::string read_tracked_file(const std::string& repo_path) {
         const fs::path index_path = fs::path(repo_path) / ".vcs" / "index";
         std::ifstream index_file(index_path);
@@ -103,7 +105,7 @@ namespace {
 
         std::string line;
         while (std::getline(index_file, line)) {
-            // Windows È¯°æÀÇ °³Çà ¹®ÀÚ(\r) Ã³¸®
+            // Windows í™˜ê²½ì˜ ê°œí–‰ ë¬¸ì(\r) ì²˜ë¦¬
             if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
@@ -115,7 +117,7 @@ namespace {
         return "";
     }
 
-    // 'dgit init' ¸í·É¾î Ã³¸®
+    // 'dgit init' ëª…ë ¹ì–´ ì²˜ë¦¬
     int handle_init(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("init");
@@ -125,7 +127,7 @@ namespace {
             return fail_usage("init takes no arguments", "dgit init");
         }
 
-        // VCS ·¹ÀÌ¾îÀÇ ÃÊ±âÈ­ ÇÔ¼ö È£Ãâ
+        // VCS ë ˆì´ì–´ì˜ ì´ˆê¸°í™” í•¨ìˆ˜ í˜¸ì¶œ
         const int result = init_repository(repo_path);
         if (result != 0) {
             std::cerr << "fatal: dgit repository already exists or could not be initialized\n";
@@ -136,7 +138,7 @@ namespace {
         return 0;
     }
 
-    // 'dgit add <file>' ¸í·É¾î Ã³¸®
+    // 'dgit add <file>' ëª…ë ¹ì–´ ì²˜ë¦¬
     int handle_add(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("add");
@@ -152,19 +154,19 @@ namespace {
         const std::string filepath = args[2];
         const fs::path file_path(filepath);
 
-        // ÆÄÀÏ Á¸Àç ¿©ºÎ °Ë»ç
+        // íŒŒì¼ ì¡´ì¬ ì—¬ë¶€ ê²€ì‚¬
         if (!fs::exists(file_path)) {
             std::cerr << "fatal: pathspec '" << filepath << "' did not match any files\n";
             return 1;
         }
-        // Æú´õ¸¦ Ãß°¡ÇÏ·Á°í ½ÃµµÇÏ´Â °æ¿ì ¿¡·¯ Ã³¸® (ÇöÀç MVP ¹üÀ§ ¾Æ´Ô)
+        // í´ë”ë¥¼ ì¶”ê°€í•˜ë ¤ê³  ì‹œë„í•˜ëŠ” ê²½ìš° ì—ëŸ¬ ì²˜ë¦¬ (í˜„ì¬ MVP ë²”ìœ„ ì•„ë‹˜)
         if (fs::is_directory(file_path)) {
             std::cerr << "fatal: pathspec '" << filepath
                 << "' is a directory; this MVP accepts exactly one file\n";
             return 1;
         }
 
-        // VCS ·¹ÀÌ¾îÀÇ add_file ÇÔ¼ö È£Ãâ
+        // VCS ë ˆì´ì–´ì˜ add_file í•¨ìˆ˜ í˜¸ì¶œ
         const int result = add_file(repo_path, filepath);
         if (result != 0) {
             std::cerr << "fatal: failed to add '" << filepath << "'\n";
@@ -175,13 +177,13 @@ namespace {
         return 0;
     }
 
-    // 'dgit commit -m "message"' ¸í·É¾î Ã³¸®
+    // 'dgit commit -m "message"' ëª…ë ¹ì–´ ì²˜ë¦¬
     int handle_commit(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("commit");
             return 0;
         }
-        // ÇÊ¼ö ¿É¼Ç °Ë»ç
+        // í•„ìˆ˜ ì˜µì…˜ ê²€ì‚¬
         if (args.size() < 4) {
             return fail_usage("switch 'm' requires a value", "dgit commit -m <message>");
         }
@@ -194,26 +196,36 @@ namespace {
             return fail_usage("empty commit message", "dgit commit -m <message>");
         }
 
-        // ÃßÀû ÁßÀÎ ÆÄÀÏÀÌ ÀÖ´ÂÁö È®ÀÎ
+        // ì¶”ì  ì¤‘ì¸ íŒŒì¼ì´ ìˆëŠ”ì§€ í™•ì¸
         const std::string target_file = read_tracked_file(repo_path);
         if (target_file.empty()) {
             std::cerr << "fatal: no tracked files. Use 'dgit add <file>' first.\n";
             return 1;
         }
 
-        // VCS ·¹ÀÌ¾îÀÇ commit ÇÔ¼ö È£Ãâ ¹× °á°ú(commit_id) ¹İÈ¯
+        // ì••ì¶• í¬ë§· ì—¬ë¶€ ì¶œë ¥
+        if (is_compressed_format(target_file))
+        {
+            std::cout << "note: compressed format detected, storing full copy\n";
+        }
+        else
+        {
+            std::cout << "note: binary delta will be created\n";
+        }   
+
+        // VCS ë ˆì´ì–´ì˜ commit í•¨ìˆ˜ í˜¸ì¶œ ë° ê²°ê³¼(commit_id) ë°˜í™˜
         const std::string commit_id = commit(repo_path, message, target_file);
         if (commit_id.empty()) {
             std::cerr << "fatal: failed to create commit\n";
             return 1;
         }
 
-        // ¼º°ø ½Ã ÂªÀº ÇØ½Ã°ª(¾Õ 8ÀÚ¸®)°ú ¸Ş½ÃÁö Ãâ·Â
+        // ì„±ê³µ ì‹œ ì§§ì€ í•´ì‹œê°’(ì• 8ìë¦¬)ê³¼ ë©”ì‹œì§€ ì¶œë ¥
         std::cout << "[dgit " << commit_id.substr(0, 8) << "] " << message << "\n";
         return 0;
     }
 
-    // 'dgit log' ¸í·É¾î Ã³¸®
+    // 'dgit log' ëª…ë ¹ì–´ ì²˜ë¦¬
     int handle_log(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("log");
@@ -223,12 +235,12 @@ namespace {
             return fail_usage("log takes no arguments", "dgit log");
         }
 
-        // VCS ·¹ÀÌ¾îÀÇ log ÇÔ¼ö È£Ãâ (³»ºÎ¿¡¼­ ÀÚÃ¼ÀûÀ¸·Î Ãâ·Â ´ã´ç)
+        // VCS ë ˆì´ì–´ì˜ log í•¨ìˆ˜ í˜¸ì¶œ (ë‚´ë¶€ì—ì„œ ìì²´ì ìœ¼ë¡œ ì¶œë ¥ ë‹´ë‹¹)
         log(repo_path);
         return 0;
     }
 
-    // 'dgit checkout <commit_id>' ¸í·É¾î Ã³¸®
+    // 'dgit checkout <commit_id>' ëª…ë ¹ì–´ ì²˜ë¦¬
     int handle_checkout(const std::vector<std::string>& args, const std::string& repo_path) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("checkout");
@@ -243,7 +255,7 @@ namespace {
 
         const std::string commit_id = args[2];
 
-        // VCS ·¹ÀÌ¾îÀÇ checkout ÇÔ¼ö È£Ãâ
+        // VCS ë ˆì´ì–´ì˜ checkout í•¨ìˆ˜ í˜¸ì¶œ
         const int result = checkout(repo_path, commit_id);
         if (result != 0) {
             std::cerr << "fatal: reference is not a commit: " << commit_id << "\n";
@@ -254,7 +266,7 @@ namespace {
         return 0;
     }
 
-    // 'dgit diff' ¸í·É¾î Ã³¸® (MVP ´Ü°è¿¡¼­´Â ÀÎÅÍÆäÀÌ½º¸¸ Á¦°ø)
+    // 'dgit diff' ëª…ë ¹ì–´ ì²˜ë¦¬ (MVP ë‹¨ê³„ì—ì„œëŠ” ì¸í„°í˜ì´ìŠ¤ë§Œ ì œê³µ)
     int handle_diff(const std::vector<std::string>& args) {
         if (args.size() == 3 && args[2] == "--help") {
             print_command_help("diff");
@@ -270,27 +282,27 @@ namespace {
 
 }  // namespace
 
-// ÇÁ·Î±×·¥ÀÇ ¸ŞÀÎ ÁøÀÔÁ¡
+// í”„ë¡œê·¸ë¨ì˜ ë©”ì¸ ì§„ì…ì 
 int main(int argc, char* argv[]) {
-    // ¿î¿µÃ¼Á¦°¡ Àü´ŞÇÑ ÀÎÀÚ ¹è¿­(argv)À» C++ º¤ÅÍ(vector)·Î º¯È¯ÇÏ¿© »ç¿ëÇÏ±â ÆíÇÏ°Ô ¸¸µê
+    // ìš´ì˜ì²´ì œê°€ ì „ë‹¬í•œ ì¸ì ë°°ì—´(argv)ì„ C++ ë²¡í„°(vector)ë¡œ ë³€í™˜í•˜ì—¬ ì‚¬ìš©í•˜ê¸° í¸í•˜ê²Œ ë§Œë“¦
     const std::vector<std::string> args(argv, argv + argc);
 
-    // ÀÎÀÚ°¡ ¾Æ¹«°Íµµ ¾øÀÌ 'dgit'¸¸ ÀÔ·ÂµÇ¾úÀ» ¶§
+    // ì¸ìê°€ ì•„ë¬´ê²ƒë„ ì—†ì´ 'dgit'ë§Œ ì…ë ¥ë˜ì—ˆì„ ë•Œ
     if (argc == 1) {
         print_general_help();
         return 1;
     }
 
-    // Ã¹ ¹øÂ° ÀÎÀÚ(¿¹: init, commit) ÃßÃâ
+    // ì²« ë²ˆì§¸ ì¸ì(ì˜ˆ: init, commit) ì¶”ì¶œ
     const std::string command = args[1];
 
-    // ÀüÃ¼ µµ¿ò¸» ¿äÃ» Ã³¸®
+    // ì „ì²´ ë„ì›€ë§ ìš”ì²­ ì²˜ë¦¬
     if (command == "--help" || command == "help") {
         print_general_help();
         return 0;
     }
 
-    // Æ¯Á¤ ¸í·É¾î¿¡ ´ëÇÑ µµ¿ò¸» ¿äÃ» Ã³¸® (¿¹: dgit add --help)
+    // íŠ¹ì • ëª…ë ¹ì–´ì— ëŒ€í•œ ë„ì›€ë§ ìš”ì²­ ì²˜ë¦¬ (ì˜ˆ: dgit add --help)
     if (args.size() == 3 && args[2] == "--help") {
         print_command_help(command);
         return 0;
@@ -298,13 +310,13 @@ int main(int argc, char* argv[]) {
 
     const std::string repo_path = current_repo_path();
 
-    // init ¸í·É¾î¸¦ Á¦¿ÜÇÏ°í´Â Ç×»ó .vcs Æú´õ°¡ Á¸ÀçÇÏ´ÂÁö ¸ÕÀú È®ÀÎ
+    // init ëª…ë ¹ì–´ë¥¼ ì œì™¸í•˜ê³ ëŠ” í•­ìƒ .vcs í´ë”ê°€ ì¡´ì¬í•˜ëŠ”ì§€ ë¨¼ì € í™•ì¸
     if (needs_repository(command) && !is_dgit_repository(repo_path)) {
         std::cerr << "fatal: not a dgit repository (or any of the parent directories): .vcs\n";
         return 1;
     }
 
-    // ÀÔ·ÂµÈ ¸í·É¾î¿¡ µû¶ó ÇØ´çµÇ´Â ÇÚµé·¯ ÇÔ¼ö·Î ¿¬°á (¶ó¿ìÆÃ)
+    // ì…ë ¥ëœ ëª…ë ¹ì–´ì— ë”°ë¼ í•´ë‹¹ë˜ëŠ” í•¸ë“¤ëŸ¬ í•¨ìˆ˜ë¡œ ì—°ê²° (ë¼ìš°íŒ…)
     if (command == "init") {
         return handle_init(args, repo_path);
     }
@@ -324,7 +336,7 @@ int main(int argc, char* argv[]) {
         return handle_diff(args);
     }
 
-    // »çÀü¿¡ Á¤ÀÇµÇÁö ¾ÊÀº ¸í·É¾î°¡ ÀÔ·ÂµÇ¾úÀ» ¶§ÀÇ ¿¹¿Ü Ã³¸®
+    // ì‚¬ì „ì— ì •ì˜ë˜ì§€ ì•Šì€ ëª…ë ¹ì–´ê°€ ì…ë ¥ë˜ì—ˆì„ ë•Œì˜ ì˜ˆì™¸ ì²˜ë¦¬
     std::cerr << "dgit: '" << command << "' is not a dgit command. See 'dgit --help'.\n";
     return 1;
 }

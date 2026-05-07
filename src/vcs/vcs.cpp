@@ -11,6 +11,8 @@
 #include "json.hpp"
 #include "vcs.h"
 #include "../engine/delta.h"
+#include "../engine/format.h"
+
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -85,6 +87,56 @@ static void write_head(const fs::path &vcs_path, const std::string &commit_id)
     std::ofstream f(vcs_path / "HEAD");
     f << commit_id;
 }
+
+// 현재 커밋이 몇 번째인지 체인 길이로 계산
+static int count_commit_depth(const std::string& repo_path,
+                               const std::string& commit_id)
+{
+    int depth = 0;
+    std::string cur = commit_id;
+    while (!cur.empty())
+    {
+        CommitMetadata m = load_commit_metadata(repo_path, cur);
+        if (m.id.empty()) break;
+        ++depth;
+        if (!m.files.empty() && m.files[0].is_base) break;
+        cur = m.parent_id;
+    }
+    return depth;
+}
+
+// 스냅샷 저장
+static void save_snapshot(const fs::path& vcs_path,
+                           const std::string& commit_id,
+                           const std::string& target_file)
+{
+    fs::path snap_path = vcs_path / "objects" / "snapshots" /
+                         (commit_id + ".snap");
+    fs::copy_file(target_file, snap_path,
+                  fs::copy_options::overwrite_existing);
+}
+
+// 체인 역추적하며 가장 가까운 스냅샷 찾기
+// 반환값: 스냅샷 커밋 ID (없으면 빈 문자열)
+static std::string find_nearest_snapshot(const std::string& repo_path,
+                                          const fs::path& vcs_path,
+                                          const std::string& commit_id)
+{
+    std::string cur = commit_id;
+    while (!cur.empty())
+    {
+        fs::path snap = vcs_path / "objects" / "snapshots" / (cur + ".snap");
+        if (fs::exists(snap))
+            return cur;
+
+        CommitMetadata m = load_commit_metadata(repo_path, cur);
+        if (m.id.empty()) break;
+        if (!m.files.empty() && m.files[0].is_base) break;
+        cur = m.parent_id;
+    }
+    return "";
+}
+
 
 // 특정 커밋 시점의 파일 out_path에 복원
 static bool restore_file_at_commit(const std::string &repo_path,
@@ -382,56 +434,81 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     }
     else
     {
-        // 직전 커밋 파일 기준으로 delta 생성
-        std::string delta_filename = commit_id + ".delta";
-        fs::path delta_path = vcs_path / "objects" / "deltas" / delta_filename;
-
-        fs::path prev_file;
-
-        /* parent_id가 비어 있는 경우:
-           base 파일은 이미 존재하지만(.vcs/objects/base/), 아직 커밋 JSON이 하나도 없는 상태
-           이 커밋이 "base 파일과 현재 작업본" 사이의 첫 번째 delta를 만드는 케이스
-           parent_id가 있는 분기로 들어가면 restore_file_at_commit()이 parent_id를 따라가다
-           JSON을 못 찾아 실패하므로, base 파일 자체를 비교 기준으로 사용한다.
-        */
-        if (parent_id.empty())
+        // 압축 포맷이면 delta 대신 전체 저장 (Git LFS 방식과 동일)
+        if (is_compressed_format(target_file))
         {
-            prev_file = base_file;
+            fs::copy_file(target_file, base_file,
+                      fs::copy_options::overwrite_existing);
+            uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+            meta.files.push_back({target_file, "", true, file_sha256, file_size});
         }
         else
         {
-            // 직전 커밋 시점의 파일을 임시 경로에 복원
-            prev_file = vcs_path / ("prev_" + commit_id);
-            std::string filename = fs::path(target_file).filename().string();
+            // 직전 커밋 파일 기준으로 delta 생성
+            std::string delta_filename = commit_id + ".delta";
+            fs::path delta_path = vcs_path / "objects" / "deltas" / delta_filename;
 
-            if (!restore_file_at_commit(repo_path, parent_id, filename, prev_file))
+            fs::path prev_file;
+
+            /* parent_id가 비어 있는 경우:
+                base 파일은 이미 존재하지만(.vcs/objects/base/), 아직 커밋 JSON이 하나도 없는 상태
+                이 커밋이 "base 파일과 현재 작업본" 사이의 첫 번째 delta를 만드는 케이스
+                parent_id가 있는 분기로 들어가면 restore_file_at_commit()이 parent_id를 따라가다
+                JSON을 못 찾아 실패하므로, base 파일 자체를 비교 기준으로 사용한다.
+            */
+            if (parent_id.empty())
             {
-                std::cerr << "직전 커밋 파일 복원 실패\n";
-                return "";
+                prev_file = base_file;
+            }
+            else
+            {
+                // 직전 커밋 시점의 파일을 임시 경로에 복원
+                prev_file = vcs_path / ("prev_" + commit_id);
+                std::string filename = fs::path(target_file).filename().string();
+
+                if (!restore_file_at_commit(repo_path, parent_id, filename, prev_file))
+                {
+                    std::cerr << "직전 커밋 파일 복원 실패\n";
+                    return "";
+                }
+            }
+
+                    // 사전 샘플링 — 변경률 높으면 전체 저장으로 전환
+            if (should_use_full_copy(prev_file.string(), target_file))
+            {
+                if (!parent_id.empty() && fs::exists(prev_file))
+                    fs::remove(prev_file);
+
+                fs::copy_file(target_file, base_file,
+                              fs::copy_options::overwrite_existing);
+                uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+                meta.files.push_back({target_file, "", true, file_sha256, file_size});
+            }
+            else
+            {
+                int ret = delta_create(prev_file.string().c_str(),
+                                        target_file.c_str(),
+                                        delta_path.string().c_str());
+
+                /* parent_id가 비어 있으면 위의 분기에서 prev_file = base_file 을 그대로
+                가리키고 있으므로, 임시 복원 파일이 생성된 적이 없다.즉, 삭제 대상이 없다.
+                parent_id가 있을 때만 restore_file_at_commit()이 임시 파일을 만들었으므로 해당 경우에만 정리한다.
+                */
+                if (!parent_id.empty() && fs::exists(prev_file))
+                    fs::remove(prev_file);
+
+                if (ret != 0)
+                {
+                    std::cerr << "delta 생성 실패\n";
+                    return "";
+                }
+
+                // delta 커밋
+                uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+                meta.files.push_back(
+                    {target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size});
             }
         }
-
-        int ret = delta_create(prev_file.string().c_str(),
-                               target_file.c_str(),
-                               delta_path.string().c_str());
-
-        /* parent_id가 비어 있으면 위의 분기에서 prev_file = base_file 을 그대로
-         가리키고 있으므로, 임시 복원 파일이 생성된 적이 없다. 즉, 삭제 대상이 없다.
-         parent_id가 있을 때만 restore_file_at_commit()이 임시 파일을 만들었으므로 해당 경우에만 정리한다.
-        */
-        if (!parent_id.empty() && fs::exists(prev_file))
-            fs::remove(prev_file);
-
-        if (ret != 0)
-        {
-            std::cerr << "delta 생성 실패\n";
-            return "";
-        }
-
-        // delta 커밋
-        uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
-        meta.files.push_back(
-            {target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size});
     }
 
     // 5. JSON 저장 & HEAD 업데이트
@@ -439,6 +516,14 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     {
         std::cerr << "커밋 메타데이터 저장 실패\n";
         return "";
+    }
+
+    // N커밋마다 스냅샷 저장
+    static const int SNAPSHOT_INTERVAL = 10;
+    int depth = count_commit_depth(repo_path, commit_id);
+    if (depth % SNAPSHOT_INTERVAL == 0)
+    {
+        save_snapshot(vcs_path, commit_id, target_file);
     }
 
     write_head(vcs_path, commit_id);
@@ -468,6 +553,7 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
     // 2. base → 목표 커밋까지 delta 체인 구성 (parent_id 역추적)
     //    chain[0] = base 커밋, chain[back] = 목표 커밋
     std::vector<std::string> chain;
+    std::string snap_commit_id = find_nearest_snapshot(repo_path, vcs_path, commit_id);
     {
         std::string cur = commit_id;
         while (!cur.empty())
@@ -479,6 +565,9 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
                 return -1;
             }
             chain.push_back(cur);
+
+            // 스냅샷 있으면 거기서 중단, 없으면 base까지
+            if (cur == snap_commit_id) break;
             // base 커밋(is_base == true)에 도달하면 중단
             if (!m.files.empty() && m.files[0].is_base)
                 break;
@@ -511,6 +600,14 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
             // tmp_a: 현재 복원 중간 결과, tmp_b: delta 적용 후 출력
             fs::path tmp_a = vcs_path / ("tmp_a_" + commit_id);
             fs::path tmp_b = vcs_path / ("tmp_b_" + commit_id);
+
+
+            // 스냅샷 있으면 스냅샷에서 시작, 없으면 base에서 시작
+            fs::path start_file;
+            if (!snap_commit_id.empty())
+                start_file = vcs_path / "objects" / "snapshots" / (snap_commit_id + ".snap");
+            else
+                start_file = base_file;
 
             fs::copy_file(base_file, tmp_a,
                           fs::copy_options::overwrite_existing);
