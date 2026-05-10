@@ -16,6 +16,9 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+// VCS 레이어의 출력은 CLI에서 담당함.
+// 사용자에게 보여줄 메시지는 CLI에서만 출력하도록 표준 출력/표준 에러 사용을 제거함.
+
 //  내부 헬퍼 함수 ㅡㅡㅡㅡㅡㅡㅡㅡ
 // 현재 시각을 ISO 8601 문자열로 변환
 std::string get_current_timestamp()
@@ -28,13 +31,13 @@ std::string get_current_timestamp()
 }
 
 // 파일 전체를 읽어 SHA256 hex 문자열로 반환. 실패 시 빈 문자열.
-static std::string sha256_file(const fs::path &path)
+static std::string sha256_file(const fs::path& path)
 {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open())
         return "";
 
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx)
         return "";
 
@@ -66,12 +69,12 @@ static std::string sha256_file(const fs::path &path)
     std::ostringstream oss;
     for (unsigned int i = 0; i < digest_len; ++i)
         oss << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(digest[i]);
+        << static_cast<int>(digest[i]);
     return oss.str();
 }
 
 // HEAD 파일에서 현재 커밋 ID 읽기 (없으면 빈 문자열)
-static std::string read_head(const fs::path &vcs_path)
+static std::string read_head(const fs::path& vcs_path)
 {
     std::string id;
     std::ifstream f(vcs_path / "HEAD");
@@ -81,15 +84,15 @@ static std::string read_head(const fs::path &vcs_path)
 }
 
 // HEAD 파일에 커밋 ID 쓰기
-static void write_head(const fs::path &vcs_path, const std::string &commit_id)
+static void write_head(const fs::path& vcs_path, const std::string& commit_id)
 {
     std::ofstream f(vcs_path / "HEAD");
     f << commit_id;
 }
 
 // 현재 커밋이 몇 번째인지 체인 길이로 계산
-static int count_commit_depth(const std::string &repo_path,
-                              const std::string &commit_id)
+static int count_commit_depth(const std::string& repo_path,
+    const std::string& commit_id)
 {
     int depth = 0;
     std::string cur = commit_id;
@@ -107,21 +110,21 @@ static int count_commit_depth(const std::string &repo_path,
 }
 
 // 스냅샷 저장
-static void save_snapshot(const fs::path &vcs_path,
-                          const std::string &commit_id,
-                          const std::string &target_file)
+static void save_snapshot(const fs::path& vcs_path,
+    const std::string& commit_id,
+    const std::string& target_file)
 {
     fs::path snap_path = vcs_path / "objects" / "snapshots" /
-                         (commit_id + ".snap");
+        (commit_id + ".snap");
     fs::copy_file(target_file, snap_path,
-                  fs::copy_options::overwrite_existing);
+        fs::copy_options::overwrite_existing);
 }
 
 // 체인 역추적하며 가장 가까운 스냅샷 찾기
 // 반환값: 스냅샷 커밋 ID (없으면 빈 문자열)
-static std::string find_nearest_snapshot(const std::string &repo_path,
-                                         const fs::path &vcs_path,
-                                         const std::string &commit_id)
+static std::string find_nearest_snapshot(const std::string& repo_path,
+    const fs::path& vcs_path,
+    const std::string& commit_id)
 {
     std::string cur = commit_id;
     while (!cur.empty())
@@ -141,10 +144,10 @@ static std::string find_nearest_snapshot(const std::string &repo_path,
 }
 
 // 특정 커밋 시점의 파일 out_path에 복원
-static bool restore_file_at_commit(const std::string &repo_path,
-                                   const std::string &prev_commit_id,
-                                   const std::string &filename,
-                                   const fs::path &out_path)
+static bool restore_file_at_commit(const std::string& repo_path,
+    const std::string& prev_commit_id,
+    const std::string& filename,
+    const fs::path& out_path)
 {
     fs::path vcs_path = fs::path(repo_path) / ".vcs";
 
@@ -188,7 +191,7 @@ static bool restore_file_at_commit(const std::string &repo_path,
         }
 
         std::string delta_rel;
-        for (const auto &entry : cm.files)
+        for (const auto& entry : cm.files)
         {
             if (fs::path(entry.path).filename() == filename)
             {
@@ -207,8 +210,8 @@ static bool restore_file_at_commit(const std::string &repo_path,
         }
 
         if (delta_apply(tmp_a.string().c_str(),
-                        delta_path.string().c_str(),
-                        tmp_b.string().c_str()) != 0)
+            delta_path.string().c_str(),
+            tmp_b.string().c_str()) != 0)
         {
             fs::remove(tmp_a);
             fs::remove(tmp_b);
@@ -222,13 +225,12 @@ static bool restore_file_at_commit(const std::string &repo_path,
 }
 
 // .vcs 폴더 구조 및 초기 설정 파일을 생성하는 함수
-int init_repository(const std::string &path)
+int init_repository(const std::string& path)
 {
     fs::path vcs = fs::path(path) / ".vcs";
 
     if (fs::exists(vcs))
     {
-        std::cerr << "이미 dgit 저장소가 존재합니다.\n";
         return -1;
     }
 
@@ -246,30 +248,26 @@ int init_repository(const std::string &path)
         // 3. HEAD 파일 생성 (현재 체크아웃된 커밋 ID 저장)
         write_head(vcs, "");
 
-        std::cout << "dgit 저장소가 초기화되었습니다: " << vcs << "\n";
         return 0;
     }
-    catch (const fs::filesystem_error &e)
+    catch (const fs::filesystem_error& e)
     {
-        std::cerr << "저장소 초기화 중 오류 발생: " << e.what() << "\n";
         return -1;
     }
 }
 
 // index에 파일 경로 등록-------
-int add_file(const std::string &repo_path, const std::string &filepath)
+int add_file(const std::string& repo_path, const std::string& filepath)
 {
     fs::path vcs_path = fs::path(repo_path) / ".vcs";
 
     if (!fs::exists(vcs_path))
     {
-        std::cerr << "dgit 저장소가 없습니다. 먼저 dgit init을 실행하세요.\n";
         return -1;
     }
 
     if (!fs::exists(filepath))
     {
-        std::cerr << "파일을 찾을 수 없습니다: " << filepath << "\n";
         return -1;
     }
 
@@ -283,7 +281,6 @@ int add_file(const std::string &repo_path, const std::string &filepath)
         {
             if (line == filepath)
             {
-                std::cout << "이미 추적 중인 파일입니다: " << filepath << "\n";
                 return 0;
             }
         }
@@ -293,18 +290,16 @@ int add_file(const std::string &repo_path, const std::string &filepath)
     std::ofstream idx(index_path, std::ios::app);
     if (!idx.is_open())
     {
-        std::cerr << "index 파일을 열 수 없습니다.\n";
         return -1;
     }
     idx << filepath << "\n";
 
-    std::cout << "추적 등록: " << filepath << "\n";
     return 0;
 }
 
 // 커밋 메타데이터 저장/읽기 --------
 // 커밋 메타데이터를 .vcs/commits/[commit_id].json 형식으로 JSON 파일로 저장하는 함수
-int save_commit_metadata(const std::string &repo_path, const CommitMetadata &meta)
+int save_commit_metadata(const std::string& repo_path, const CommitMetadata& meta)
 {
     fs::path file_path =
         fs::path(repo_path) / ".vcs" / "commits" / (meta.id + ".json");
@@ -317,13 +312,13 @@ int save_commit_metadata(const std::string &repo_path, const CommitMetadata &met
     j["sha256"] = meta.sha256;
 
     j["files"] = json::array();
-    for (const auto &f : meta.files)
+    for (const auto& f : meta.files)
     {
-        j["files"].push_back({{"path", f.path},
+        j["files"].push_back({ {"path", f.path},
                               {"delta", f.delta},
                               {"is_base", f.is_base},
                               {"sha256", f.sha256},
-                              {"length", f.length}});
+                              {"length", f.length} });
     }
 
     try
@@ -341,14 +336,13 @@ int save_commit_metadata(const std::string &repo_path, const CommitMetadata &met
 }
 
 //  저장된 커밋 JSON을 읽어오는 함수
-CommitMetadata load_commit_metadata(const std::string &repo_path, const std::string &commit_id)
+CommitMetadata load_commit_metadata(const std::string& repo_path, const std::string& commit_id)
 {
     fs::path file_path = fs::path(repo_path) / ".vcs" / "commits" / (commit_id + ".json");
 
     std::ifstream file(file_path);
     if (!file.is_open())
     {
-        std::cerr << "커밋을 찾을 수 없습니다: " << commit_id << "\n";
         return {};
     }
 
@@ -364,7 +358,7 @@ CommitMetadata load_commit_metadata(const std::string &repo_path, const std::str
         meta.parent_id = j.at("parent_id").get<std::string>();
         meta.sha256 = j.value("sha256", "");
 
-        for (const auto &item : j.at("files"))
+        for (const auto& item : j.at("files"))
         {
             FileEntry fe;
             fe.path = item.at("path").get<std::string>();
@@ -377,28 +371,24 @@ CommitMetadata load_commit_metadata(const std::string &repo_path, const std::str
 
         return meta;
     }
-    catch (const json::exception &e)
+    catch (const json::exception& e)
     {
         // 손상된 메타데이터 예외 처리
-        std::cerr << "메타데이터 파싱 오류 (" << commit_id << "): "
-                  << e.what() << "\n";
         return {};
     }
 }
 
 // commit: 파일의 델타를 생성 및 메타데이터를 JSON으로 저장----------
-std::string commit(const std::string &repo_path, const std::string &message, const std::string &target_file)
+std::string commit(const std::string& repo_path, const std::string& message, const std::string& target_file)
 {
     fs::path vcs_path = fs::path(repo_path) / ".vcs";
 
     if (!fs::exists(vcs_path))
     {
-        std::cerr << "dgit 저장소가 없습니다. 먼저 dgit init을 실행하세요.\n";
         return "";
     }
     if (!fs::exists(target_file))
     {
-        std::cerr << "대상 파일을 찾을 수 없습니다: " << target_file << "\n";
         return "";
     }
 
@@ -424,15 +414,15 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     meta.sha256 = file_sha256;
 
     fs::path base_file = vcs_path / "objects" / "base" /
-                         fs::path(target_file).filename();
+        fs::path(target_file).filename();
 
     // 4. 최초 커밋: base에 파일 통째로 복사
     if (!fs::exists(base_file))
     {
         fs::copy_file(target_file, base_file,
-                      fs::copy_options::overwrite_existing);
+            fs::copy_options::overwrite_existing);
         uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
-        meta.files.push_back({target_file, "", true, file_sha256, file_size});
+        meta.files.push_back({ target_file, "", true, file_sha256, file_size });
     }
     else
     {
@@ -440,9 +430,9 @@ std::string commit(const std::string &repo_path, const std::string &message, con
         if (is_compressed_format(target_file))
         {
             fs::copy_file(target_file, base_file,
-                          fs::copy_options::overwrite_existing);
+                fs::copy_options::overwrite_existing);
             uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
-            meta.files.push_back({target_file, "", true, file_sha256, file_size});
+            meta.files.push_back({ target_file, "", true, file_sha256, file_size });
         }
         else
         {
@@ -470,7 +460,6 @@ std::string commit(const std::string &repo_path, const std::string &message, con
 
                 if (!restore_file_at_commit(repo_path, parent_id, filename, prev_file))
                 {
-                    std::cerr << "직전 커밋 파일 복원 실패\n";
                     return "";
                 }
             }
@@ -484,15 +473,15 @@ std::string commit(const std::string &repo_path, const std::string &message, con
                 std::string fc_filename = commit_id + ".fullcopy";
                 fs::path fc_path = vcs_path / "objects" / "snapshots" / fc_filename;
                 fs::copy_file(target_file, fc_path,
-                              fs::copy_options::overwrite_existing);
+                    fs::copy_options::overwrite_existing);
                 uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
-                meta.files.push_back({target_file, "objects/snapshots/" + fc_filename, true, file_sha256, file_size});
+                meta.files.push_back({ target_file, "objects/snapshots/" + fc_filename, true, file_sha256, file_size });
             }
             else
             {
                 int ret = delta_create(prev_file.string().c_str(),
-                                       target_file.c_str(),
-                                       delta_path.string().c_str());
+                    target_file.c_str(),
+                    delta_path.string().c_str());
 
                 /* parent_id가 비어 있으면 위의 분기에서 prev_file = base_file 을 그대로
                 가리키고 있으므로, 임시 복원 파일이 생성된 적이 없다.즉, 삭제 대상이 없다.
@@ -503,14 +492,13 @@ std::string commit(const std::string &repo_path, const std::string &message, con
 
                 if (ret != 0)
                 {
-                    std::cerr << "delta 생성 실패\n";
                     return "";
                 }
 
                 // delta 커밋
                 uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
                 meta.files.push_back(
-                    {target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size});
+                    { target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size });
             }
         }
     }
@@ -518,7 +506,6 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     // 5. JSON 저장 & HEAD 업데이트
     if (save_commit_metadata(repo_path, meta) != 0)
     {
-        std::cerr << "커밋 메타데이터 저장 실패\n";
         return "";
     }
 
@@ -531,18 +518,16 @@ std::string commit(const std::string &repo_path, const std::string &message, con
     }
 
     write_head(vcs_path, commit_id);
-    std::cout << "[" << commit_id.substr(0, 8) << "] " << message << "\n";
     return commit_id;
 }
 
 // checkout: 특정 시점으로 파일 복원--------
-int checkout(const std::string &repo_path, const std::string &commit_id)
+int checkout(const std::string& repo_path, const std::string& commit_id)
 {
     fs::path vcs_path = fs::path(repo_path) / ".vcs";
 
     if (!fs::exists(vcs_path))
     {
-        std::cerr << "dgit 저장소가 없습니다.\n";
         return -1;
     }
 
@@ -550,7 +535,6 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
     CommitMetadata target = load_commit_metadata(repo_path, commit_id);
     if (target.id.empty())
     {
-        std::cerr << "존재하지 않는 커밋 ID입니다: " << commit_id << "\n";
         return -1;
     }
 
@@ -565,7 +549,6 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
             CommitMetadata m = load_commit_metadata(repo_path, cur);
             if (m.id.empty())
             {
-                std::cerr << "체인 순회 중 손상된 메타데이터: " << cur << "\n";
                 return -1;
             }
             chain.push_back(cur);
@@ -582,14 +565,13 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
     }
 
     // 3. 파일별 복원
-    for (const auto &fe : target.files)
+    for (const auto& fe : target.files)
     {
         fs::path base_file = vcs_path / "objects" / "base" /
-                             fs::path(fe.path).filename();
+            fs::path(fe.path).filename();
 
         if (!fs::exists(base_file))
         {
-            std::cerr << "base 파일 없음: " << base_file << "\n";
             return -1;
         }
 
@@ -604,11 +586,10 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
 
             if (!fs::exists(src_file))
             {
-                std::cerr << "복원 원본 파일 없음: " << src_file << "\n";
                 return -1;
             }
             fs::copy_file(src_file, fe.path,
-                          fs::copy_options::overwrite_existing);
+                fs::copy_options::overwrite_existing);
         }
         else
         {
@@ -633,15 +614,13 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
                 CommitMetadata cm = load_commit_metadata(repo_path, chain[i]);
                 if (cm.id.empty())
                 {
-                    std::cerr << "체인 복원 중 손상된 메타데이터: "
-                              << chain[i] << "\n";
                     fs::remove(tmp_a);
                     return -1;
                 }
 
                 // 같은 파일명의 delta 경로 탐색
                 std::string delta_rel;
-                for (const auto &entry : cm.files)
+                for (const auto& entry : cm.files)
                 {
                     if (fs::path(entry.path).filename() ==
                         fs::path(fe.path).filename())
@@ -657,17 +636,15 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
                 fs::path delta_path = vcs_path / delta_rel;
                 if (!fs::exists(delta_path))
                 {
-                    std::cerr << "delta 파일 없음: " << delta_path << "\n";
                     fs::remove(tmp_a);
                     return -1;
                 }
 
                 // delta 적용: tmp_a(이전) + delta → tmp_b(다음)
                 if (delta_apply(tmp_a.string().c_str(),
-                                delta_path.string().c_str(),
-                                tmp_b.string().c_str()) != 0)
+                    delta_path.string().c_str(),
+                    tmp_b.string().c_str()) != 0)
                 {
-                    std::cerr << "delta 적용 실패 (커밋: " << chain[i] << ")\n";
                     fs::remove(tmp_a);
                     fs::remove(tmp_b);
                     return -1;
@@ -678,7 +655,7 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
 
             // 최종 결과를 원래 경로에 저장
             fs::copy_file(tmp_a, fe.path,
-                          fs::copy_options::overwrite_existing);
+                fs::copy_options::overwrite_existing);
             fs::remove(tmp_a);
         }
 
@@ -688,36 +665,29 @@ int checkout(const std::string &repo_path, const std::string &commit_id)
             std::string actual = sha256_file(fe.path);
             if (actual != fe.sha256)
             {
-                std::cerr << "SHA256 불일치 - 복원 실패!\n"
-                          << "  기대값: " << fe.sha256 << "\n"
-                          << "  실제값: " << actual << "\n";
                 return -1;
             }
-            std::cout << "SHA256 검증 통과: " << fe.path << "\n";
         }
     }
 
     // 5. HEAD 업데이트
     write_head(vcs_path, commit_id);
-    std::cout << "체크아웃 완료: " << commit_id.substr(0, 8) << "\n";
     return 0;
 }
 
 // log: HEAD-> parent_id 체인 순회 출력---------
-void log(const std::string &repo_path)
+void log(const std::string& repo_path)
 {
     fs::path vcs_path = fs::path(repo_path) / ".vcs";
 
     if (!fs::exists(vcs_path))
     {
-        std::cerr << "dgit 저장소가 없습니다.\n";
         return;
     }
 
     std::string cur = read_head(vcs_path);
     if (cur.empty())
     {
-        std::cout << "커밋 히스토리가 없습니다.\n";
         return;
     }
 
@@ -727,19 +697,11 @@ void log(const std::string &repo_path)
         CommitMetadata meta = load_commit_metadata(repo_path, cur);
         if (meta.id.empty())
         {
-            std::cerr << "손상된 커밋 발견, 히스토리 출력을 중단합니다: "
-                      << cur << "\n";
             break;
         }
 
-        std::cout << "commit  " << meta.id << "\n"
-                  << "Date:   " << meta.timestamp << "\n"
-                  << "        " << meta.message << "\n\n";
 
         ++count;
         cur = meta.parent_id; // 부모 커밋으로 이동
     }
-
-    if (count == 0)
-        std::cout << "커밋 히스토리가 없습니다.\n";
 }
