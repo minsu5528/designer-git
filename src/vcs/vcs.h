@@ -25,11 +25,12 @@ int init_repository(const std::string &path);
  * 파일을 추적 대상으로 등록한다. (dgit add)
  * .vcs/index 파일에 경로를 한 줄 추가한다.
  *
+ * @param repo_path 저장소 루트 경로
  * @param filepath 추적할 파일 경로
  * @return         0 성공, -1 실패
  *
  */
-int add_file(const std::string &filepath);
+int add_file(const std::string &repo_path, const std::string &filepath);
 
 /**
  * commit
@@ -54,7 +55,7 @@ std::string commit(const std::string &repo_path, const std::string &message, con
  *
  * 사용: CLI, 테스트
  */
-int checkout(const std::string &commit_id);
+int checkout(const std::string &repo_path, const std::string &commit_id);
 
 /**
  * log
@@ -63,14 +64,15 @@ int checkout(const std::string &commit_id);
  *
  * 사용: CLI
  */
-void log();
+void log(const std::string &repo_path);
 
 // 커밋 내 개별 파일 정보를 관리하기 위한 구조체
 struct FileEntry
 {
-    std::string path;  // 원본 파일 경로
-    std::string delta; // delta 파일이나 base 파일의 저장 경로
-    bool is_base;      // true면 base 파일, false면 delta 파일
+    std::string path;   // 원본 파일 경로
+    std::string delta;  // delta 파일이나 base 파일의 저장 경로
+    bool is_base;       // true면 base 파일, false면 delta 파일
+    std::string sha256; // 파일 내용의 SHA-256 해시
     uint64_t length;    // 파일 크기 (가변 블록 CDC 지원용)
 };
 
@@ -81,6 +83,7 @@ struct CommitMetadata
     std::string message;          // 커밋 메시지
     std::string timestamp;        // 생성 시각(ISO 8601)
     std::string parent_id;        // 이전 커밋 ID (없으면 빈 문자열)
+    std::string sha256;           // 커밋 전체 내용의 SHA-256 해시
     std::vector<FileEntry> files; // 커밋에 포함된 파일 목록
 };
 

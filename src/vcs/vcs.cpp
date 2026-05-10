@@ -605,8 +605,8 @@ int checkout(const std::string& repo_path, const std::string& commit_id)
             else
                 start_file = base_file;
 
-            fs::copy_file(base_file, tmp_a,
-                fs::copy_options::overwrite_existing);
+            fs::copy_file(start_file, tmp_a,
+                          fs::copy_options::overwrite_existing);
 
             // chain[0]은 base 커밋(delta 없음), chain[1]부터 delta 적용
             for (size_t i = 1; i < chain.size(); ++i)
