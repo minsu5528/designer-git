@@ -1,5 +1,6 @@
 #include "delta.h"
 #include <iostream>
+#include <cstring>
 #include <fstream>
 #include <vector>
 #include <cstdlib>
@@ -44,7 +45,7 @@ bool modify_file(const char* src, const char* dst) {
 int main() {
     srand(static_cast<unsigned>(time(nullptr)));
 
-    const size_t TEST_MB = 1000;
+    const size_t TEST_MB = 10000;
     std::cout << TEST_MB << "MB test start...\n";
 
     std::cout << "1. Creating base file...\n";
@@ -84,12 +85,22 @@ int main() {
     std::cout << "5. Verifying restore...\n";
     std::ifstream f1("test_modified.bin", std::ios::binary);
     std::ifstream f2("test_restored.bin", std::ios::binary);
-    std::vector<char> d1((std::istreambuf_iterator<char>(f1)),
-                          std::istreambuf_iterator<char>());
-    std::vector<char> d2((std::istreambuf_iterator<char>(f2)),
-                          std::istreambuf_iterator<char>());
 
-    if (d1 == d2)
+    const size_t CMP_BUF = 4 * 1024 * 1024;
+    std::vector<char> b1(CMP_BUF), b2(CMP_BUF);
+    bool match = true;
+
+    while (true) {
+        f1.read(b1.data(), CMP_BUF);
+        f2.read(b2.data(), CMP_BUF);
+        size_t n1 = f1.gcount(), n2 = f2.gcount();
+        if (n1 != n2 || memcmp(b1.data(), b2.data(), n1) != 0) {
+            match = false; break;
+        }
+        if (n1 == 0) break;
+    }
+
+    if (match)
         std::cout << "OK Restore success: byte-level match\n";
     else {
         std::cerr << "FAIL: byte mismatch\n"; return 1;

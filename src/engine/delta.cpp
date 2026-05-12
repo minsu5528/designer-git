@@ -19,7 +19,7 @@ static const size_t   MIN_CHUNK    = 4  * 1024;          // 최소 블록 4KB  (
 static const size_t   MAX_CHUNK    = 64 * 1024;          // 최대 블록 64KB (과대 청크 방지)
 static const size_t   WINDOW_SIZE  = 48;                 // 슬라이딩 윈도우 (경계 안정성 ↔ 비용 균형)
 static const uint64_t CDC_BASE     = 257ULL;             // 롤링 해시 기저 (CDC 경계 탐지용)
-static const uint64_t CDC_MOD      = 1000000007ULL;      // 롤링 해시 모듈러
+//static const uint64_t CDC_MOD      = 1000000007ULL;      // 롤링 해시 모듈러
 static const uint64_t CDC_MASK     = 16383ULL;           // (2^14-1): P(hit)≈1/16384 → 평균 ~16KB 블록
 static const uint64_t HASH_BASE    = 131ULL;             // 블록 내용 해시 기저 (이중 해시 충돌 완화용)
 static const uint64_t HASH_MOD     = 998244353ULL;       // 블록 내용 해시 모듈러 (CDC_MOD와 다른 소수)
@@ -39,7 +39,7 @@ static const uint64_t MAX_VALID_LEN  = static_cast<uint64_t>(MAX_CHUNK) * 2;
 static uint64_t compute_pow_base_win() {
     uint64_t r = 1;
     for (size_t i = 0; i < WINDOW_SIZE; ++i)
-        r = (r * CDC_BASE) % CDC_MOD;
+        r = r * CDC_BASE; // 오버플로우 허용, % 없음
     return r;
 }
 static const uint64_t POW_BASE_WIN = compute_pow_base_win();
@@ -70,7 +70,7 @@ struct BlockHasher {
 static BlockHash compute_block_hash(const std::vector<uint8_t>& data) {
     uint64_t h1 = 0, h2 = 0;
     for (uint8_t b : data) {
-        h1 = (h1 * CDC_BASE  + b) % CDC_MOD;
+        h1 = h1 * CDC_BASE  + b;          // uint64_t 오버플로우 모듈러
         h2 = (h2 * HASH_BASE + b) % HASH_MOD;
     }
     return { h1, h2 };
@@ -92,21 +92,14 @@ struct CdcState {
 
     // 바이트 하나를 슬라이딩 윈도우에 밀어 넣고 rolling hash 갱신
     void push(uint8_t b) {
-        uint8_t removed = 0;
-        if (ring_count == WINDOW_SIZE)
-            removed = ring[ring_head];
-        else
-            ++ring_count;
+        uint8_t removed = (ring_count == WINDOW_SIZE) ? ring[ring_head] : 0;
+        if (ring_count < WINDOW_SIZE) ++ring_count;
 
         ring[ring_head] = b;
-        ring_head = (ring_head + 1) % static_cast<int>(WINDOW_SIZE);
+        ring_head = (ring_head + 1 < static_cast<int>(WINDOW_SIZE))
+                    ? ring_head + 1 : 0; // 분기문이 % 보다 빠름
 
-        // 음수 모듈러 방어: (rolling + CDC_MOD - removed_val) % CDC_MOD
-        uint64_t rv = (removed * POW_BASE_WIN) % CDC_MOD;
-        rolling = (rolling * CDC_BASE + b) % CDC_MOD;
-        rolling = (rolling >= rv)
-                    ? (rolling - rv) % CDC_MOD
-                    : (rolling + CDC_MOD - rv) % CDC_MOD;
+        rolling = rolling * CDC_BASE + b - (removed * POW_BASE_WIN);
     }
 
     bool is_boundary(size_t chunk_size) const {
