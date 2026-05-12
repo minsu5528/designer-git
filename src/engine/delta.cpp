@@ -6,6 +6,10 @@
 #include <vector>
 #include <algorithm>
 #include <filesystem>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 
 namespace fs = std::filesystem;
 
@@ -257,7 +261,7 @@ int delta_create(const char* path_a,
                  const char* path_b,
                  const char* out_delta) {
 
-    // 1단계: 파일 A CDC 분할 → 해시맵 구성
+    // 1단계: 파일 A CDC 분할 → 해시맵 구성 (싱글스레드, 순차)
     std::unordered_map<BlockHash, std::pair<uint64_t, uint64_t>, BlockHasher> hash_map;
     int ret = build_hash_map(path_a, hash_map);
     if (ret != DELTA_OK) return ret;
@@ -266,16 +270,161 @@ int delta_create(const char* path_a,
     std::ofstream out(out_delta, std::ios::binary);
     if (!out) return ERR_OPEN_OUT;
 
-    std::vector<char> write_buf(1024 * 1024);     
+    std::vector<char> write_buf(1024 * 1024);
     out.rdbuf()->pubsetbuf(write_buf.data(), write_buf.size());
 
-    // Delta 파일 헤더: 손상/잘못된 파일 조기 감지 + 버전 관리
-    if (!out.write(DELTA_MAGIC, sizeof(DELTA_MAGIC)))       return ERR_OUT_WRITE;
+    if (!out.write(DELTA_MAGIC, sizeof(DELTA_MAGIC)))     return ERR_OUT_WRITE;
     if (!out.write(reinterpret_cast<const char*>(&DELTA_VERSION),
-                   sizeof(DELTA_VERSION)))                   return ERR_OUT_WRITE;
+                   sizeof(DELTA_VERSION)))                 return ERR_OUT_WRITE;
 
-    // 3단계: 파일 B CDC 분할 → COPY/INSERT 스트리밍 출력
-    return process_file_b(path_b, hash_map, out);
+    // 3단계: Producer-Consumer로 파일 B 처리
+    // Double Buffer: Producer가 buf[0] 채우는 동안 Consumer가 buf[1] 처리
+    constexpr int NUM_BUFS = 2;
+    std::vector<std::vector<uint8_t>> bufs(NUM_BUFS,
+                                           std::vector<uint8_t>(IO_BUF_SIZE));
+    std::vector<size_t> buf_sizes(NUM_BUFS, 0);
+
+    std::mutex              mtx;
+    std::condition_variable cv_full;   // Consumer 깨우기
+    std::condition_variable cv_empty;  // Producer 깨우기
+
+    // 0: 비어있음, 1: 가득 참
+    std::vector<int> buf_state(NUM_BUFS, 0);
+    std::atomic<bool> producer_done{false};
+    std::atomic<int>  consumer_error{DELTA_OK};
+
+    // ── Producer ─────────────────────────────────────────────
+    auto producer = [&]() {
+    std::ifstream file(path_b, std::ios::binary);
+    if (!file) {
+        std::unique_lock<std::mutex> lk(mtx);
+        producer_done = true;
+        cv_full.notify_all();
+        return;
+    }
+
+    int idx = 0;
+    while (true) {
+        // 슬롯이 빌 때까지 먼저 대기
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv_empty.wait(lk, [&]{ return buf_state[idx] == 0; });
+        }
+
+        // 슬롯 비어있음 확인 후 디스크 읽기
+        file.read(reinterpret_cast<char*>(bufs[idx].data()), IO_BUF_SIZE);
+        size_t n = static_cast<size_t>(file.gcount());
+
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            buf_sizes[idx] = n;
+            buf_state[idx] = 1;
+            cv_full.notify_one();
+        }
+
+        if (n == 0) break;
+        idx = (idx + 1) % NUM_BUFS;
+    }
+
+    std::unique_lock<std::mutex> lk(mtx);
+    producer_done = true;
+    cv_full.notify_all();
+};
+
+    // ── Consumer ─────────────────────────────────────────────
+    auto consumer = [&]() {
+        std::vector<uint8_t> current;
+        current.reserve(MAX_CHUNK);
+        CdcState cdc;
+
+        auto emit = [&]() -> int {
+            if (current.empty()) return DELTA_OK;
+            BlockHash bh = compute_block_hash(current);
+            auto it = hash_map.find(bh);
+
+            if (it != hash_map.end() &&
+                it->second.second == static_cast<uint64_t>(current.size()))
+            {
+                uint8_t  cmd     = CMD_COPY;
+                uint64_t src_off = it->second.first;
+                uint64_t src_len = it->second.second;
+                if (!out.write(reinterpret_cast<const char*>(&cmd),     sizeof(cmd)))     return ERR_OUT_WRITE;
+                if (!out.write(reinterpret_cast<const char*>(&src_off), sizeof(src_off))) return ERR_OUT_WRITE;
+                if (!out.write(reinterpret_cast<const char*>(&src_len), sizeof(src_len))) return ERR_OUT_WRITE;
+            } else {
+                uint8_t  cmd = CMD_INSERT;
+                uint64_t len = static_cast<uint64_t>(current.size());
+                if (!out.write(reinterpret_cast<const char*>(&cmd), sizeof(cmd))) return ERR_OUT_WRITE;
+                if (!out.write(reinterpret_cast<const char*>(&len), sizeof(len))) return ERR_OUT_WRITE;
+                if (!out.write(reinterpret_cast<const char*>(current.data()),
+                            static_cast<std::streamsize>(len)))                return ERR_OUT_WRITE;
+            }
+            current.clear();
+            cdc.reset();
+            return DELTA_OK;
+        };
+
+        int idx = 0;
+        while (true) {
+            // 버퍼가 찰 때까지 대기
+            std::unique_lock<std::mutex> lk(mtx);
+            cv_full.wait(lk, [&]{
+                return buf_state[idx] == 1 || producer_done.load();
+            });
+
+            if (buf_state[idx] != 1) break;
+
+            size_t n = buf_sizes[idx];
+            lk.unlock();
+
+            if (n == 0) {
+                // empty 신호 보내고 종료
+                std::unique_lock<std::mutex> lk2(mtx);
+                buf_state[idx] = 0;
+                cv_empty.notify_one();
+                break;
+            }
+
+            // bufs[idx] 처리 (락 없이)
+            size_t chunk_start_idx = 0;
+            for (size_t i = 0; i < n; ++i) {
+                cdc.push(bufs[idx][i]);
+                size_t temp_size = current.size() + (i - chunk_start_idx + 1);
+                if (cdc.is_boundary(temp_size)) {
+                    current.insert(current.end(),
+                                bufs[idx].data() + chunk_start_idx,
+                                bufs[idx].data() + i + 1);
+                    int r = emit();
+                    if (r != DELTA_OK) { consumer_error = r; return; }
+                    chunk_start_idx = i + 1;
+                }
+            }
+            if (chunk_start_idx < n) {
+                current.insert(current.end(),
+                            bufs[idx].data() + chunk_start_idx,
+                            bufs[idx].data() + n);
+            }
+
+            // 처리 완료 후 empty 신호
+            {
+                std::unique_lock<std::mutex> lk2(mtx);
+                buf_state[idx] = 0;
+                cv_empty.notify_one();
+            }
+            idx = (idx + 1) % NUM_BUFS;
+        }
+
+        int r = emit();
+        if (r != DELTA_OK) consumer_error = r;
+    };
+
+    // ── 스레드 실행 ───────────────────────────────────────────
+    std::thread t_producer(producer);
+    std::thread t_consumer(consumer);
+    t_producer.join();
+    t_consumer.join();
+
+    return consumer_error.load();
 }
 
 // ── delta_apply ───────────────────────────────────────────────
