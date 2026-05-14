@@ -1,3 +1,0 @@
-/mnt/c/Users/cgim0/Documents/26-1/공소/프로젝트/build/CMakeFiles/dgit.dir
-/mnt/c/Users/cgim0/Documents/26-1/공소/프로젝트/build/CMakeFiles/edit_cache.dir
-/mnt/c/Users/cgim0/Documents/26-1/공소/프로젝트/build/CMakeFiles/rebuild_cache.dir

@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/dgit.dir/src/cli/main.cpp.o CMakeFiles/dgit.dir/src/vcs/vcs.cpp.o CMakeFiles/dgit.dir/src/engine/delta.cpp.o CMakeFiles/dgit.dir/src/engine/format.cpp.o -o dgit  /usr/lib/x86_64-linux-gnu/libcrypto.so /usr/lib/x86_64-linux-gnu/libzstd.so.1.5.5 
