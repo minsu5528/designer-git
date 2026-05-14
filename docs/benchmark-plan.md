@@ -51,7 +51,7 @@ designer_git의 핵심 가설을 수치로 검증한다.
 | --------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
 | **A. 원본 전체 저장** | 커밋마다 파일을 그대로 복사해 누적 저장 (no delta, no compression) | 베이스라인. delta의 절대적 필요성 근거         |
 | **B. Git LFS**        | `git lfs track "*.fbx"` — 현재 업계 표준 방식                      | 매 커밋 전체 파일 재업로드. 발표의 핵심 대조군 |
-| **C. designer_git**   | CDC Rolling Hash + COPY/INSERT delta (zstd 미적용, raw binary)     | 검증 대상                                      |
+| **C. designer_git**   | CDC Rolling Hash + COPY/INSERT delta                               |
 
 ---
 
@@ -169,7 +169,6 @@ CPU          : (실험 시 기재)
 RAM          : (실험 시 기재)
 Storage      : (SSD / HDD 및 읽기 속도 기재)
 Compiler     : g++ -O2
-zstd version : 해당 없음
 Git version  : (Git LFS 대조군용)
 ```
 

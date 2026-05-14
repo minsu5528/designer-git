@@ -54,12 +54,11 @@ Git LFS는 바이너리 파일을 매 커밋마다 전체 재저장합니다. �
 
 ## 의존성
 
-| 항목    | 버전       | 용도                                       |
-| ------- | ---------- | ------------------------------------------ |
-| CMake   | 3.15 이상  | 빌드 시스템                                |
-| g++     | C++17 지원 | 컴파일러                                   |
-| OpenSSL | -          | SHA256 해시 (커밋 ID 생성, checkout 검증)  |
-| zstd    | -          | CMakeLists 링크 (현재 delta 파일에 미적용) |
+| 항목    | 버전       | 용도                                      |
+| ------- | ---------- | ----------------------------------------- |
+| CMake   | 3.15 이상  | 빌드 시스템                               |
+| g++     | C++17 지원 | 컴파일러                                  |
+| OpenSSL | -          | SHA256 해시 (커밋 ID 생성, checkout 검증) |
 
 ## 설치 방법
 
@@ -67,13 +66,13 @@ Git LFS는 바이너리 파일을 매 커밋마다 전체 재저장합니다. �
 
 ```bash
 sudo apt update
-sudo apt install cmake g++ libssl-dev libzstd-dev
+sudo apt install cmake g++ libssl-dev
 ```
 
 ### macOS (Homebrew)
 
 ```bash
-brew install cmake openssl zstd
+brew install cmake openssl
 ```
 
 ### 빌드
