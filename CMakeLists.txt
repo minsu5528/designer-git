@@ -4,7 +4,6 @@ project(dgit)
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(OpenSSL REQUIRED)
-find_package(zstd REQUIRED)
 
 add_executable(dgit
     src/cli/main.cpp
@@ -21,5 +20,4 @@ target_include_directories(dgit PRIVATE
 
 target_link_libraries(dgit PRIVATE
     OpenSSL::Crypto
-    zstd::libzstd_shared
 )

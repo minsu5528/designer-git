@@ -43,10 +43,27 @@
 # VS Code 개인 설정
 .vscode/
 
-#vcpkg
+# vcpkg
 vcpkg/
 
+# 빌드 산출물
+build/
+
+# dgit 실행 파일 (확장자 없는 Linux/macOS 빌드 결과물)
+dgit
+
+# CMake 캐시
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# 테스트 임시 파일
 src/engine/test_*.bin
 src/engine/test_*.delta
 src/engine/test_delta.exe
 src/engine/test.delta
+
+# OS 파일
+.DS_Store
+Thumbs.db
