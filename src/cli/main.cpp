@@ -10,6 +10,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <cstdlib>
 
 #include "../vcs/vcs.h"
 
@@ -210,7 +211,14 @@ namespace {
     public:
         explicit ScopedCurrentPath(const fs::path& next_path)
             : previous_path_(fs::current_path()) {
-            fs::current_path(next_path);
+            try {
+                fs::current_path(next_path);
+            }
+            catch (const fs::filesystem_error& e) {
+                std::cerr << u8"오류: 저장소 디렉터리로 이동할 수 없습니다: "
+                          << next_path << " (" << e.what() << ")\n";
+                std::exit(1);
+            }
         }
 
         ~ScopedCurrentPath() {
@@ -288,9 +296,13 @@ namespace {
     }
 
     // 잘못된 명령어 사용 시 에러 메시지와 사용법을 함께 출력함.
-    int fail_usage(const std::string& message, const std::string& usage) {
+    // command를 전달하면 "--help 힌트"도 함께 출력함.
+    int fail_usage(const std::string& message, const std::string& usage,
+                   const std::string& command = "") {
         std::cerr << "dgit: " << message << "\n";
         std::cerr << u8"사용법: " << usage << "\n";
+        if (!command.empty())
+            std::cerr << u8"자세한 도움말: dgit " << command << " --help\n";
         return 1;
     }
 
@@ -736,12 +748,13 @@ namespace {
             return 0;
         }
         if (args.size() != 2) {
-            return fail_usage(u8"init 명령은 인자를 받지 않습니다", "dgit init");
+            return fail_usage(u8"init 명령은 인자를 받지 않습니다", "dgit init", "init");
         }
 
         const int result = init_repository(repo_path);
         if (result != 0) {
-            std::cerr << u8"오류: dgit 저장소가 이미 있거나 초기화할 수 없습니다\n";
+            std::cerr << u8"오류: 저장소 초기화에 실패했습니다\n";
+            std::cerr << u8"힌트: .vcs 폴더가 이미 존재하거나, 현재 폴더에 쓰기 권한이 없을 수 있습니다.\n";
             return 1;
         }
         return 0;
@@ -756,10 +769,10 @@ namespace {
             return 0;
         }
         if (args.size() < 3) {
-            return fail_usage(u8"경로가 필요합니다", "dgit add <file|folder>");
+            return fail_usage(u8"경로가 필요합니다", "dgit add <file|folder>", "add");
         }
         if (args.size() > 3) {
-            return fail_usage(u8"add 명령은 현재 경로 하나만 받을 수 있습니다", "dgit add <file|folder>");
+            return fail_usage(u8"add 명령은 현재 경로 하나만 받을 수 있습니다", "dgit add <file|folder>", "add");
         }
 
         std::vector<std::string> targets;
@@ -815,15 +828,17 @@ namespace {
             return 0;
         }
         if (args.size() < 4) {
-            return fail_usage(u8"-m 옵션에는 커밋 메시지가 필요합니다", "dgit commit -m <message> [path...]");
+            return fail_usage(u8"-m 옵션에는 커밋 메시지가 필요합니다", "dgit commit -m <message> [path...]", "commit");
         }
         if (args[2] != "-m") {
-            return fail_usage(u8"커밋 메시지가 필요합니다", "dgit commit -m <message> [path...]");
+            return fail_usage(
+                u8"'-m' 옵션이 필요합니다 (입력된 옵션: '" + args[2] + "')",
+                "dgit commit -m <message> [path...]", "commit");
         }
 
         const std::string message = args[3];
         if (message.empty()) {
-            return fail_usage(u8"커밋 메시지가 비어 있습니다", "dgit commit -m <message> [path...]");
+            return fail_usage(u8"커밋 메시지가 비어 있습니다", "dgit commit -m <message> [path...]", "commit");
         }
 
         std::vector<std::string> pathspecs;
@@ -898,7 +913,7 @@ namespace {
             return 0;
         }
         if (args.size() != 2) {
-            return fail_usage(u8"log 명령은 인자를 받지 않습니다", "dgit log");
+            return fail_usage(u8"log 명령은 인자를 받지 않습니다", "dgit log", "log");
         }
 
         const fs::path head_path = fs::path(repo_path) / ".vcs" / "HEAD";
@@ -942,16 +957,17 @@ namespace {
             return 0;
         }
         if (args.size() < 3) {
-            return fail_usage(u8"커밋 ID가 필요합니다", "dgit checkout <commit_id>");
+            return fail_usage(u8"커밋 ID가 필요합니다", "dgit checkout <commit_id>", "checkout");
         }
         if (args.size() > 3) {
-            return fail_usage(u8"checkout 명령은 커밋 ID 하나만 받을 수 있습니다", "dgit checkout <commit_id>");
+            return fail_usage(u8"checkout 명령은 커밋 ID 하나만 받을 수 있습니다", "dgit checkout <commit_id>", "checkout");
         }
 
         const std::string commit_id = args[2];
         const int result = checkout(repo_path, commit_id);
         if (result != 0) {
-            std::cerr << u8"오류: 커밋 ID가 아닙니다: " << commit_id << "\n";
+            std::cerr << u8"오류: 체크아웃 실패: '" << commit_id << "'\n";
+            std::cerr << u8"힌트: 커밋 ID가 올바른지 'dgit log'로 확인하세요.\n";
             return 1;
         }
 
@@ -967,8 +983,11 @@ namespace {
             print_command_help("diff");
             return 0;
         }
-        if (args.size() != 4) {
-            return fail_usage(u8"diff 명령에는 커밋 ID 두 개가 필요합니다", "dgit diff <commit1> <commit2>");
+        if (args.size() < 4) {
+            return fail_usage(u8"diff 명령에는 커밋 ID 두 개가 필요합니다", "dgit diff <commit1> <commit2>", "diff");
+        }
+        if (args.size() > 4) {
+            return fail_usage(u8"diff 명령은 커밋 ID 두 개만 받을 수 있습니다", "dgit diff <commit1> <commit2>", "diff");
         }
 
         const std::string old_commit = args[2];
@@ -1007,7 +1026,15 @@ namespace {
             if (!file.delta.empty()) {
                 const fs::path delta_path = vcs_path / file.delta;
                 if (fs::exists(delta_path)) {
-                    changed_bytes = fs::file_size(delta_path);
+                    std::error_code ec;
+                    const std::uintmax_t sz = fs::file_size(delta_path, ec);
+                    if (!ec) {
+                        changed_bytes = sz;
+                    } else {
+                        std::cerr << u8"경고: delta 파일 크기를 읽을 수 없습니다: "
+                                  << file.delta << "\n";
+                    }
+
                 }
                 else {
                     std::cerr << u8"경고: delta/fullcopy 파일이 없습니다: "
