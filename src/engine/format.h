@@ -1,5 +1,22 @@
 #pragma once
 #include <string>
+#include <unordered_set>
+#include <string>
+
+
+// 폴더 add 시 수집 대상 바이너리 확장자 목록
+static const std::unordered_set<std::string> BINARY_EXTENSIONS = {
+    // 3D 메시/씬
+    ".fbx", ".obj", ".dae", ".3ds", ".blend", ".abc",
+    // 텍스처/이미지 (비압축)
+    ".exr", ".tiff", ".tif", ".tga", ".hdr", ".psd",
+    // 텍스처/이미지 (압축 → commit 시 fullcopy 분기)
+    ".png", ".jpg", ".jpeg", ".bmp",
+    // 동영상/오디오
+    ".mp4", ".mov", ".wav",
+    // 기타 바이너리
+    ".bin", ".raw", ".vdb"
+};
 
 /**
  * is_compressed_format

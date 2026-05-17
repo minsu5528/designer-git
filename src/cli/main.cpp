@@ -13,6 +13,7 @@
 #include <cstdlib>
 
 #include "../vcs/vcs.h"
+#include "../engine/format.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -259,6 +260,13 @@ namespace {
         return fs::is_regular_file(path) && has_fbx_extension(path);
     }
 
+    // 실제 일반 파일이며 지원 바이너리 확장자인지 확인함.
+    bool is_binary_file(const fs::path& path) {
+        if (!fs::is_regular_file(path)) return false;
+        const std::string ext = to_lower(path.extension().string());
+        return BINARY_EXTENSIONS.count(ext) > 0;
+    }
+
     // 단일 파일을 명시적으로 add/commit할 때 .fbx만 허용할지 빌드 옵션에 따라 결정함.
     bool explicit_file_allowed_by_policy(const fs::path& path) {
 #if DGIT_STRICT_FBX_ONLY
@@ -475,7 +483,7 @@ namespace {
                         continue;
                     }
 
-                    if (!is_fbx_file(entry_path)) {
+                    if (!is_binary_file(entry_path)) {
                         continue;
                     }
 
