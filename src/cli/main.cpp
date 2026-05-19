@@ -29,7 +29,7 @@ namespace fs = std::filesystem;
  *
  * 주요 설계 포인트:
  *  - 서브폴더에서 dgit을 실행해도 저장소 루트(.vcs가 있는 폴더)를 찾아 동작함.
- *  - add 폴더 입력 시 .fbx 파일만 재귀적으로 수집함.
+ *  - add 폴더 입력 시 .바이너리 파일을 재귀적으로 수집함
  *  - commit은 디스크 전체를 훑지 않고 .vcs/index에 등록된 추적 파일만 대상으로 함.
  *  - VCS가 다중 파일 atomic commit을 지원하지 않으면 여러 커밋으로 쪼개지 않고 안전하게 실패 처리함.
  */
@@ -346,7 +346,7 @@ namespace {
         }
         else if (command == "add") {
             std::cout << u8"사용법: dgit add <file|folder>\n\n"
-                << u8"파일 하나를 추적 목록에 추가합니다. 폴더를 입력하면 내부의 .fbx 파일만 추가합니다.\n"
+                << u8"파일 하나를 추적 목록에 추가합니다. 폴더를 입력하면 내부의 바이너리 파일만 추가합니다.\n"
 #if DGIT_STRICT_FBX_ONLY
                 << u8"이 빌드는 명시적으로 추가한 파일도 .fbx만 허용합니다.\n"
 #else
@@ -790,7 +790,7 @@ namespace {
         }
 
         if (targets.empty()) {
-            std::cout << u8".fbx 파일을 찾지 못했습니다: " << args[2] << "\n";
+            std::cout << u8".바이너리 파일을 찾지 못했습니다: " << args[2] << "\n";
             return 0;
         }
 
