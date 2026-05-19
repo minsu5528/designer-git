@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 
 // ── 오류 코드 ─────────────────────────────────────────────────
 // CLI에서 원인별 메시지 출력에 활용
@@ -43,7 +44,8 @@ enum DeltaError {
  */
 int delta_create(const char* path_a,
                  const char* path_b,
-                 const char* out_delta);
+                 const char* out_delta,
+                 std::string* out_sha256 = nullptr);
 
 /**
  * delta_apply

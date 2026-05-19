@@ -10,6 +10,15 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+#include <openssl/evp.h>
+#include <sstream>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -17,7 +26,7 @@ namespace fs = std::filesystem;
 static const size_t   IO_BUF_SIZE  = 4  * 1024 * 1024; // 4MB I/O 버퍼 (디스크 읽기 단위)
 static const size_t   MIN_CHUNK    = 4  * 1024;          // 최소 블록 4KB  (과분할 방지)
 static const size_t   MAX_CHUNK    = 64 * 1024;          // 최대 블록 64KB (과대 청크 방지)
-static const size_t   WINDOW_SIZE  = 48;                 // 슬라이딩 윈도우 (경계 안정성 ↔ 비용 균형)
+static const size_t   WINDOW_SIZE  = 64;                 // 슬라이딩 윈도우 (경계 안정성 ↔ 비용 균형)
 static const uint64_t CDC_BASE     = 257ULL;             // 롤링 해시 기저 (CDC 경계 탐지용)
 //static const uint64_t CDC_MOD      = 1000000007ULL;      // 롤링 해시 모듈러
 static const uint64_t CDC_MASK     = 16383ULL;           // (2^14-1): P(hit)≈1/16384 → 평균 ~16KB 블록
@@ -96,8 +105,7 @@ struct CdcState {
         if (ring_count < WINDOW_SIZE) ++ring_count;
 
         ring[ring_head] = b;
-        ring_head = (ring_head + 1 < static_cast<int>(WINDOW_SIZE))
-                    ? ring_head + 1 : 0; // 분기문이 % 보다 빠름
+        ring_head = (ring_head + 1) & 63;
 
         rolling = rolling * CDC_BASE + b - (removed * POW_BASE_WIN);
     }
@@ -252,7 +260,8 @@ static int process_file_b(
 // ── delta_create ──────────────────────────────────────────────
 int delta_create(const char* path_a,
                  const char* path_b,
-                 const char* out_delta) {
+                 const char* out_delta,
+                 std::string* out_sha256) {
 
     // 1단계: 파일 A CDC 분할 → 해시맵 구성 (싱글스레드, 순차)
     std::unordered_map<BlockHash, std::pair<uint64_t, uint64_t>, BlockHasher> hash_map;
@@ -288,41 +297,64 @@ int delta_create(const char* path_a,
 
     // ── Producer ─────────────────────────────────────────────
     auto producer = [&]() {
-    std::ifstream file(path_b, std::ios::binary);
-    if (!file) {
+        std::ifstream file(path_b, std::ios::binary);
+        if (!file) {
+            std::unique_lock<std::mutex> lk(mtx);
+            producer_done = true;
+            cv_full.notify_all();
+            return;
+        }
+
+        // SHA256 컨텍스트 초기화
+        EVP_MD_CTX* sha_ctx = nullptr;
+        if (out_sha256) {
+            sha_ctx = EVP_MD_CTX_new();
+            EVP_DigestInit_ex(sha_ctx, EVP_sha256(), nullptr);
+        }
+
+        int idx = 0;
+        while (true) {
+            {
+                std::unique_lock<std::mutex> lk(mtx);
+                cv_empty.wait(lk, [&]{ return buf_state[idx] == 0; });
+            }
+
+            file.read(reinterpret_cast<char*>(bufs[idx].data()), IO_BUF_SIZE);
+            size_t n = static_cast<size_t>(file.gcount());
+
+            // 읽은 데이터를 SHA256에 피기배킹
+            if (sha_ctx && n > 0)
+                EVP_DigestUpdate(sha_ctx, bufs[idx].data(), n);
+
+            {
+                std::unique_lock<std::mutex> lk(mtx);
+                buf_sizes[idx] = n;
+                buf_state[idx] = 1;
+                cv_full.notify_one();
+            }
+
+            if (n == 0) break;
+            idx = (idx + 1) % NUM_BUFS;
+        }
+
+        // SHA256 최종화
+        if (sha_ctx && out_sha256) {
+            unsigned char digest[EVP_MAX_MD_SIZE];
+            unsigned int digest_len = 0;
+            EVP_DigestFinal_ex(sha_ctx, digest, &digest_len);
+            EVP_MD_CTX_free(sha_ctx);
+
+            std::ostringstream oss;
+            for (unsigned int i = 0; i < digest_len; ++i)
+                oss << std::hex << std::setw(2) << std::setfill('0')
+                    << static_cast<int>(digest[i]);
+            *out_sha256 = oss.str();
+        }
+
         std::unique_lock<std::mutex> lk(mtx);
         producer_done = true;
         cv_full.notify_all();
-        return;
-    }
-
-    int idx = 0;
-    while (true) {
-        // 슬롯이 빌 때까지 먼저 대기
-        {
-            std::unique_lock<std::mutex> lk(mtx);
-            cv_empty.wait(lk, [&]{ return buf_state[idx] == 0; });
-        }
-
-        // 슬롯 비어있음 확인 후 디스크 읽기
-        file.read(reinterpret_cast<char*>(bufs[idx].data()), IO_BUF_SIZE);
-        size_t n = static_cast<size_t>(file.gcount());
-
-        {
-            std::unique_lock<std::mutex> lk(mtx);
-            buf_sizes[idx] = n;
-            buf_state[idx] = 1;
-            cv_full.notify_one();
-        }
-
-        if (n == 0) break;
-        idx = (idx + 1) % NUM_BUFS;
-    }
-
-    std::unique_lock<std::mutex> lk(mtx);
-    producer_done = true;
-    cv_full.notify_all();
-};
+    };
 
     // ── Consumer ─────────────────────────────────────────────
     auto consumer = [&]() {
@@ -425,25 +457,60 @@ int delta_apply(const char* path_base,
                 const char* path_delta,
                 const char* out_file) {
 
-    std::ifstream base(path_base, std::ios::binary);
-    if (!base) return ERR_OPEN_SRC;
+    // base 파일 mmap
+    int base_fd = open(path_base, O_RDONLY);
+    if (base_fd < 0) return ERR_OPEN_SRC;
+
+    struct stat base_st;
+    if (fstat(base_fd, &base_st) < 0) { close(base_fd); return ERR_OPEN_SRC; }
+    size_t base_size = static_cast<size_t>(base_st.st_size);
+
+    const uint8_t* base_ptr = nullptr;
+    if (base_size > 0) {
+        base_ptr = static_cast<const uint8_t*>(
+            mmap(nullptr, base_size, PROT_READ, MAP_PRIVATE, base_fd, 0));
+        if (base_ptr == MAP_FAILED) { close(base_fd); return ERR_OPEN_SRC; }
+        // 순차 읽기 힌트 → OS가 캐시 페이징 최소화
+        madvise((void*)base_ptr, base_size, MADV_SEQUENTIAL);
+    }
+    close(base_fd);
 
     std::ifstream delta_f(path_delta, std::ios::binary);
-    if (!delta_f) return ERR_OPEN_DELTA;
+    if (!delta_f) {
+        if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+        return ERR_OPEN_DELTA;
+    }
 
     std::ofstream out(out_file, std::ios::binary);
-    if (!out) return ERR_OPEN_OUT;
+    if (!out) {
+        if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+        return ERR_OPEN_OUT;
+    }
+
+    // 1MB 쓰기 버퍼
+    std::vector<char> write_buf(1024 * 1024);
+    out.rdbuf()->pubsetbuf(write_buf.data(), write_buf.size());
 
     // 헤더 검증: magic + version
     char     magic[8]   = {};
     uint32_t version    = 0;
-    if (!delta_f.read(magic, sizeof(magic)))         return ERR_TRUNCATED_DELTA;
-    if (std::memcmp(magic, DELTA_MAGIC, 8) != 0)     return ERR_BAD_MAGIC;
-    if (!delta_f.read(reinterpret_cast<char*>(&version),
-                      sizeof(version)))               return ERR_TRUNCATED_DELTA;
-    if (version != DELTA_VERSION)                    return ERR_BAD_VERSION;
+    if (!delta_f.read(magic, sizeof(magic))) {
+        if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+        return ERR_TRUNCATED_DELTA;
+    }
+    if (std::memcmp(magic, DELTA_MAGIC, 8) != 0) {
+        if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+        return ERR_BAD_MAGIC;
+    }
+    if (!delta_f.read(reinterpret_cast<char*>(&version), sizeof(version))) {
+        if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+        return ERR_TRUNCATED_DELTA;
+    }
+    if (version != DELTA_VERSION) {
+        if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+        return ERR_BAD_VERSION;
+    }
 
-    // 가변 크기 블록용 읽기 버퍼 (재사용)
     std::vector<uint8_t> buf;
     buf.reserve(MAX_CHUNK);
 
@@ -451,47 +518,64 @@ int delta_apply(const char* path_base,
     while (delta_f.read(reinterpret_cast<char*>(&cmd), sizeof(cmd))) {
 
         if (cmd == CMD_COPY) {
-            // COPY: on-disk 포맷은 uint64_t (이식성 보장)
             uint64_t src_off = 0, src_len = 0;
-            if (!delta_f.read(reinterpret_cast<char*>(&src_off), sizeof(src_off))) return ERR_TRUNCATED_DELTA;
-            if (!delta_f.read(reinterpret_cast<char*>(&src_len), sizeof(src_len))) return ERR_TRUNCATED_DELTA;
+            if (!delta_f.read(reinterpret_cast<char*>(&src_off), sizeof(src_off))) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_TRUNCATED_DELTA;
+            }
+            if (!delta_f.read(reinterpret_cast<char*>(&src_len), sizeof(src_len))) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_TRUNCATED_DELTA;
+            }
 
-            // 길이 상한 검증 (악성/손상 delta 방어)
-            if (src_len == 0 || src_len > MAX_VALID_LEN) return ERR_INVALID_LEN;
+            if (src_len == 0 || src_len > MAX_VALID_LEN) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_INVALID_LEN;
+            }
+            if (src_off + src_len > base_size) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_BASE_READ;
+            }
 
-            buf.resize(static_cast<size_t>(src_len));
-            base.seekg(static_cast<std::streamoff>(src_off));
-            if (!base) return ERR_BASE_READ;
-
-            base.read(reinterpret_cast<char*>(buf.data()),
-                      static_cast<std::streamsize>(src_len));
-            // 요청한 바이트 수만큼 정확히 읽혔는지 검증
-            if (static_cast<uint64_t>(base.gcount()) != src_len) return ERR_BASE_READ;
-
-            if (!out.write(reinterpret_cast<const char*>(buf.data()),
-                           static_cast<std::streamsize>(src_len))) return ERR_OUT_WRITE;
+            // mmap 포인터로 직접 write → seekg 오버헤드 없음
+            if (!out.write(reinterpret_cast<const char*>(base_ptr + src_off),
+                           static_cast<std::streamsize>(src_len))) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_OUT_WRITE;
+            }
 
         } else if (cmd == CMD_INSERT) {
             uint64_t len = 0;
-            if (!delta_f.read(reinterpret_cast<char*>(&len), sizeof(len))) return ERR_TRUNCATED_DELTA;
+            if (!delta_f.read(reinterpret_cast<char*>(&len), sizeof(len))) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_TRUNCATED_DELTA;
+            }
 
-            // 길이 상한 검증
-            if (len == 0 || len > MAX_VALID_LEN) return ERR_INVALID_LEN;
+            if (len == 0 || len > MAX_VALID_LEN) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_INVALID_LEN;
+            }
 
             buf.resize(static_cast<size_t>(len));
             delta_f.read(reinterpret_cast<char*>(buf.data()),
                          static_cast<std::streamsize>(len));
-            // 요청한 바이트 수만큼 정확히 읽혔는지 검증
-            if (static_cast<uint64_t>(delta_f.gcount()) != len) return ERR_TRUNCATED_DELTA;
+            if (static_cast<uint64_t>(delta_f.gcount()) != len) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_TRUNCATED_DELTA;
+            }
 
             if (!out.write(reinterpret_cast<const char*>(buf.data()),
-                           static_cast<std::streamsize>(len))) return ERR_OUT_WRITE;
+                           static_cast<std::streamsize>(len))) {
+                if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
+                return ERR_OUT_WRITE;
+            }
 
         } else {
-            // 알 수 없는 cmd → 손상된 delta 파일로 판단, 즉시 중단
+            if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
             return ERR_BAD_CMD;
         }
     }
 
+    if (base_ptr) munmap(const_cast<uint8_t*>(base_ptr), base_size);
     return DELTA_OK;
 }
