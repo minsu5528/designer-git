@@ -3,8 +3,9 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <vector>
 
-static const size_t SAMPLE_BLOCK = 16 * 1024;        // 16KB 블록 단위
+static const size_t SAMPLE_BLOCK = 4 * 1024 * 1024;        // 4MB 블록 단위
 static const size_t SAMPLE_REGION = 100 * 1024 * 1024; // 100MB 구간
 
 // 앞 16바이트만 읽으면 모든 헤더 판별 가능
@@ -63,16 +64,16 @@ static size_t count_changed_blocks(std::ifstream& prev_f,
     prev_f.seekg(offset);
     curr_f.seekg(offset);
 
-    uint8_t prev_buf[SAMPLE_BLOCK];
-    uint8_t curr_buf[SAMPLE_BLOCK];
+    std::vector<uint8_t> prev_buf(SAMPLE_BLOCK);
+    std::vector<uint8_t> curr_buf(SAMPLE_BLOCK);
 
     size_t changed = 0;
     size_t scanned = 0;
 
     while (scanned < region_size)
     {
-        prev_f.read(reinterpret_cast<char*>(prev_buf), SAMPLE_BLOCK);
-        curr_f.read(reinterpret_cast<char*>(curr_buf), SAMPLE_BLOCK);
+        prev_f.read(reinterpret_cast<char*>(prev_buf.data()), SAMPLE_BLOCK);
+        curr_f.read(reinterpret_cast<char*>(curr_buf.data()), SAMPLE_BLOCK);
 
         size_t prev_n = static_cast<size_t>(prev_f.gcount());
         size_t curr_n = static_cast<size_t>(curr_f.gcount());
@@ -81,7 +82,7 @@ static size_t count_changed_blocks(std::ifstream& prev_f,
             break;
 
         size_t n = std::min(prev_n, curr_n);
-        if (memcmp(prev_buf, curr_buf, n) != 0)
+        if (memcmp(prev_buf.data(), curr_buf.data(), n) != 0)
             ++changed;
 
         scanned += n;

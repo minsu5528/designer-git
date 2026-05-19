@@ -403,8 +403,8 @@ std::string commit(const std::string& repo_path, const std::string& message, con
     ss << std::hex << std::setw(16) << std::setfill('0') << hasher(seed);
     std::string commit_id = ss.str();
 
-    // 3. 파일 SHA256
-    std::string file_sha256 = sha256_file(target_file);
+    // 3. 파일 SHA256 — delta 경로가 아닌 경우에만 미리 계산
+    std::string file_sha256;
 
     CommitMetadata meta;
     meta.id = commit_id;
@@ -419,6 +419,7 @@ std::string commit(const std::string& repo_path, const std::string& message, con
     // 4. 최초 커밋: base에 파일 통째로 복사
     if (!fs::exists(base_file))
     {
+        file_sha256 = sha256_file(target_file);
         fs::copy_file(target_file, base_file,
             fs::copy_options::overwrite_existing);
         uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
@@ -429,6 +430,7 @@ std::string commit(const std::string& repo_path, const std::string& message, con
         // 압축 포맷이면 delta 대신 전체 저장 (Git LFS 방식과 동일)
         if (is_compressed_format(target_file))
         {
+            file_sha256 = sha256_file(target_file);
             fs::copy_file(target_file, base_file,
                 fs::copy_options::overwrite_existing);
             uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
@@ -481,7 +483,8 @@ std::string commit(const std::string& repo_path, const std::string& message, con
             {
                 int ret = delta_create(prev_file.string().c_str(),
                     target_file.c_str(),
-                    delta_path.string().c_str());
+                    delta_path.string().c_str(),
+                    &file_sha256);
 
                 /* parent_id가 비어 있으면 위의 분기에서 prev_file = base_file 을 그대로
                 가리키고 있으므로, 임시 복원 파일이 생성된 적이 없다.즉, 삭제 대상이 없다.
@@ -593,20 +596,15 @@ int checkout(const std::string& repo_path, const std::string& commit_id)
         }
         else
         {
-            // delta 체인 순차 적용
-            // tmp_a: 현재 복원 중간 결과, tmp_b: delta 적용 후 출력
-            fs::path tmp_a = vcs_path / ("tmp_a_" + commit_id);
-            fs::path tmp_b = vcs_path / ("tmp_b_" + commit_id);
-
             // 스냅샷 있으면 스냅샷에서 시작, 없으면 base에서 시작
-            fs::path start_file;
+            // copy_file 없이 포인터만 가리킴
+            fs::path current_base;
             if (!snap_commit_id.empty())
-                start_file = vcs_path / "objects" / "snapshots" / (snap_commit_id + ".snap");
+                current_base = vcs_path / "objects" / "snapshots" / (snap_commit_id + ".snap");
             else
-                start_file = base_file;
+                current_base = base_file;
 
-            fs::copy_file(start_file, tmp_a,
-                          fs::copy_options::overwrite_existing);
+            fs::path start_file = current_base; // 원본 보존용
 
             // chain[0]은 base 커밋(delta 없음), chain[1]부터 delta 적용
             for (size_t i = 1; i < chain.size(); ++i)
@@ -614,7 +612,8 @@ int checkout(const std::string& repo_path, const std::string& commit_id)
                 CommitMetadata cm = load_commit_metadata(repo_path, chain[i]);
                 if (cm.id.empty())
                 {
-                    fs::remove(tmp_a);
+                    if (current_base != start_file && fs::exists(current_base))
+                        fs::remove(current_base);
                     return -1;
                 }
 
@@ -636,27 +635,34 @@ int checkout(const std::string& repo_path, const std::string& commit_id)
                 fs::path delta_path = vcs_path / delta_rel;
                 if (!fs::exists(delta_path))
                 {
-                    fs::remove(tmp_a);
+                    if (current_base != start_file && fs::exists(current_base))
+                        fs::remove(current_base);
                     return -1;
                 }
 
-                // delta 적용: tmp_a(이전) + delta → tmp_b(다음)
-                if (delta_apply(tmp_a.string().c_str(),
-                    delta_path.string().c_str(),
-                    tmp_b.string().c_str()) != 0)
+                // 마지막 delta면 바로 최종 경로로 출력 → copy_file 불필요
+                bool is_last = (i == chain.size() - 1);
+                fs::path target_out = is_last
+                    ? fs::path(fe.path)
+                    : vcs_path / ("tmp_" + commit_id + "_" + std::to_string(i));
+
+                if (delta_apply(current_base.string().c_str(),
+                                delta_path.string().c_str(),
+                                target_out.string().c_str()) != 0)
                 {
-                    fs::remove(tmp_a);
-                    fs::remove(tmp_b);
+                    if (current_base != start_file && fs::exists(current_base))
+                        fs::remove(current_base);
+                    if (fs::exists(target_out))
+                        fs::remove(target_out);
                     return -1;
                 }
 
-                fs::rename(tmp_b, tmp_a); // 다음 단계 입력으로 교체
-            }
+                // 이전 임시 파일 삭제 (원본 start_file은 건드리지 않음)
+                if (current_base != start_file && fs::exists(current_base))
+                    fs::remove(current_base);
 
-            // 최종 결과를 원래 경로에 저장
-            fs::copy_file(tmp_a, fe.path,
-                fs::copy_options::overwrite_existing);
-            fs::remove(tmp_a);
+                current_base = target_out;
+            }
         }
 
         // 4. SHA256 검증
