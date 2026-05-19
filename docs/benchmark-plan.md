@@ -163,6 +163,24 @@ v1 커밋 → v2 커밋 → v3 커밋 → checkout v1 → diff v1 원본
 
 ### 6.2 실험 환경
 
+> ** WSL 사용자 필수**: 반드시 WSL 네이티브 경로(`~/...`)에서 실행하세요.  
+> `/mnt/c/` 경로에서 실행하면 Windows NTFS ↔ WSL 파일시스템 변환 오버헤드로  
+> I/O 병목이 발생해 측정값이 **10~13배 왜곡**됩니다.
+>
+> ```bash
+> # 프로젝트를 WSL 홈으로 복사 (최초 1회)
+> cp -r /mnt/c/.../designer_git ~/designer_git
+>
+> # WSL에서 빌드
+> cd ~/designer_git
+> mkdir -p build && cd build
+> cmake .. && make -j4
+>
+> # 벤치마크 실행 (sudo 필요 — 파일 시스템 캐시 플러시용)
+> cd ~/designer_git
+> sudo python3 benchmark/measure.py --dgit ./build/dgit --scenarios 2,3,6,7,8
+> ```
+
 ```
 OS           : Ubuntu 22.04 LTS
 CPU          : (실험 시 기재)
@@ -171,8 +189,6 @@ Storage      : (SSD / HDD 및 읽기 속도 기재)
 Compiler     : g++ -O2
 Git version  : (Git LFS 대조군용)
 ```
-
----
 
 ## 7. 자동화 스크립트 구조
 
@@ -186,7 +202,7 @@ designer-git/
 │   └── cli/       # CLI 명령어
 ├── tests/         # 단위 테스트
 ├── benchmark/                        ← 현재 폴더
-│   ├── run_all.sh                    # 전체 실험 실행 진입점
+│   ├── run_all.sh                    # 전체 실험 일괄 실행 (WSL 네이티브 경로에서 실행할 것)
 │   ├── setup.py                      # 테스트 파일 생성 (fbx 모의, 랜덤 바이너리)
 │   ├── measure.py                    # 각 시나리오 실행 및 CSV 저장
 │   ├── plot.py                       # CSV → 그래프 생성

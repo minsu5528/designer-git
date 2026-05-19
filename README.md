@@ -82,7 +82,7 @@ git clone https://github.com/minsu5528/designer_git
 cd designer_git
 mkdir build && cd build
 cmake ..
-make
+make -j4
 ```
 
 빌드 완료 후 `build/dgit` 실행 파일이 생성됩니다.
@@ -245,6 +245,32 @@ python3 test_pipeline.py
 ```
 
 테스트 항목: 기본 라운드트립, SHA256 검증, delta 체인 3개 이상 복원, 빈 파일, 손상된 메타데이터, 전체 파일 교체, 다양한 파일 크기 등 13개 시나리오.
+
+## 벤치마크 실행
+
+> **WSL 사용자 필수**: 반드시 WSL 네이티브 경로(`~/...`)에서 실행  
+> `/mnt/c/` 경로에서 실행하면 I/O 병목으로 측정값이 **10~13배 왜곡**됩니다.
+
+### 1. 프로젝트를 WSL 홈으로 복사
+
+```bash
+cp -r /mnt/c/.../designer_git ~/designer_git
+```
+
+### 2. WSL에서 빌드
+
+```bash
+cd ~/designer_git
+mkdir -p build && cd build
+cmake .. && make -j4
+```
+
+### 3. 벤치마크 실행 (`sudo` 필요 — 파일 시스템 캐시 플러시용)
+
+```bash
+cd ~/designer_git
+sudo python3 benchmark/measure.py --dgit ./build/dgit --scenarios 2,3,6,7,8
+```
 
 ## 라이선스
 
