@@ -5,7 +5,7 @@
 #include <iostream>
 #include <vector>
 
-static const size_t SAMPLE_BLOCK = 4 + 1024 * 1024;        // 4MB 블록 단위
+static const size_t SAMPLE_BLOCK = 4 * 1024 * 1024;        // 4MB 블록 단위
 static const size_t SAMPLE_REGION = 100 * 1024 * 1024; // 100MB 구간
 
 // 앞 16바이트만 읽으면 모든 헤더 판별 가능

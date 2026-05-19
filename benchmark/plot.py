@@ -73,10 +73,6 @@ def plot_scenario2_storage(results_dir, output_dir):
 
     # commit_no별 vcs_total_kb 평균
     commits = sorted(set(int(r["commit_no"]) for r in rows))
-    dgit_sizes = []
-    for c in commits:
-        vals = [r["vcs_total_kb"] for r in rows if int(r["commit_no"]) == c]
-        dgit_sizes.append(avg(vals) / 1024 / 1024)  # KB → TB? No, KB→GB
 
     # Git LFS: 1GB 파일 × commit 횟수 (전체 재저장)
     lfs_sizes = [c * 1024 for c in commits]  # MB
