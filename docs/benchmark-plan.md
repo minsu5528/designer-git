@@ -4,255 +4,353 @@
 
 designer_git의 핵심 가설을 수치로 검증한다.
 
-> _"CDC 기반 delta 추출을 적용하면, 바이너리 파일을 반복 커밋할 때  
-> Git LFS 대비 저장소 증가량을 90% 이상 절감할 수 있다."_
+> _"실제 3D·VFX 파이프라인 후반 작업에서 CDC delta 저장이 얼마나 효과적인가?  
+> 그리고 어떤 조건에서 한계가 발생하는가?"_
 
-최종 발표에서 제시할 **스토리지 절감률 / commit 시간 / checkout 시간** 세 가지 지표를 객관적으로 측정하고, 그 결과를 CSV와 그래프로 산출한다.
-
----
-
-## 2. 변수 정의
-
-### 2.1 독립변수 (Independent Variables)
-
-| 변수          | 수준                         | 설명                                                 |
-| ------------- | ---------------------------- | ---------------------------------------------------- |
-| **파일 형식** | `.fbx` (비압축 Binary FBX)   | 정점 데이터가 연속 배열로 저장되어 delta 추출에 적합 |
-|               | `.jpg` (압축 포맷)           | delta 비효율 케이스 — 전체 저장 fallback 검증용      |
-|               | `/dev/urandom` 생성 바이너리 | 최악 케이스 (완전 랜덤, delta 압축 불가)             |
-| **파일 크기** | 100 MB                       | 소규모                                               |
-|               | 1 GB                         | 중간 규모                                            |
-|               | 10 GB                        | 대규모 (목표 성능 지표 기준)                         |
-| **수정량**    | 1 바이트 (단일 정점 수정)    | 최선 케이스                                          |
-|               | 파일의 1 % 수정              | 소규모 수정                                          |
-|               | 파일의 10 % 수정             | 중간 수정                                            |
-|               | 파일 전체 교체               | 최악 케이스                                          |
-
-### 2.2 종속변수 (Dependent Variables)
-
-| 변수              | 단위   | 측정 방법                                                 |
-| ----------------- | ------ | --------------------------------------------------------- |
-| **저장소 증가량** | MB     | `du -sb .vcs/` 또는 `.git/lfs/objects/` 를 커밋 전후 차분 |
-| **commit 시간**   | 초 (s) | `time dgit commit -m "..."` / `time git commit`           |
-| **checkout 시간** | 초 (s) | `time dgit checkout <id>` / `time git checkout`           |
-
-### 2.3 통제변수 (Controlled Variables)
-
-- 동일 머신, 동일 OS 환경에서 실행
-- 파일 시스템 캐시 플러시 (`sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'`) 후 측정
-- 매 실험 전 저장소 초기화 (clean slate)
-- 동일한 수정 스크립트 사용 (재현 가능성 확보)
+초기 스컬핑/모델링 단계는 Vertex Buffer가 전체 재생성되므로 delta 효율이 낮다.  
+텍스처링 이후 후반 단계(In-place 픽셀 수정, 키프레임 값 변경, Transform 수정)는 delta 효율이 높을 것으로 예측한다.  
+**파이프라인 단계별 절감률 / commit 시간 / checkout 시간** 세 가지 지표를 객관적으로 측정하고, 그 결과를 CSV와 그래프로 산출한다
 
 ---
 
-## 3. 비교군 (Comparison Groups)
+## 2. 실험 설계
 
-| 비교군                | 설명                                                               | 측정 대상                                      |
-| --------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
-| **A. 원본 전체 저장** | 커밋마다 파일을 그대로 복사해 누적 저장 (no delta, no compression) | 베이스라인. delta의 절대적 필요성 근거         |
-| **B. Git LFS**        | `git lfs track "*.fbx"` — 현재 업계 표준 방식                      | 매 커밋 전체 파일 재업로드. 발표의 핵심 대조군 |
-| **C. designer_git**   | CDC Rolling Hash + COPY/INSERT delta                               |
+### 독립변수 (Independent Variables)
 
----
+| 변수            | 값                                                  |
+| --------------- | --------------------------------------------------- |
+| 파이프라인 단계 | 모델링 / 리깅 / 애니메이션 / 씬 어셈블리            |
+| 사용 툴         | Maya / Blender                                      |
+| 수정량          | 극소(1~2px) / 소량(~10%) / 중간(~50%) / 전체(~100%) |
 
-## 4. 실험 시나리오
+### 종속변수 (Dependent Variables)
 
-### 시나리오 A — 소규모 반복 수정 (핵심 시나리오)
+- 저장소 증가량 (KB/MB)
+- delta 크기 (KB)
+- delta 효율 (절감률 %)
+- commit 시간 (초)
+- checkout 시간 (초)
+- SHA256 검증 통과 여부
+- Early-exit 판단 시간 (초)
 
-> 작업자가 매일 조금씩 파일을 수정하는 실제 작업 패턴을 모사한다.
+### 비교군
 
-```
-초기 커밋 (v1) → 1 % 수정 후 커밋 (v2) → ... → 1 % 수정 후 커밋 (v10)
-```
+| 군             | 설명                  |
+| -------------- | --------------------- |
+| 원본 전체 저장 | fullcopy baseline     |
+| Git LFS        | 현재 업계 표준 대조군 |
+| designer-git   | 본 프로젝트           |
 
-- 파일 형식: `.fbx`
-- 파일 크기: 100 MB, 1 GB
-- 수정량: 커밋당 파일의 1 %
-- 커밋 횟수: 10회
-- 측정 항목: 커밋별 저장소 증가량, 누적 저장소 크기
+### 반복 횟수: 3회 평균
 
----
+### 실험 파일 구성
 
-### 시나리오 B — 단일 바이트 수정 (이론치 검증)
-
-> delta 효율 이론치(99.9 %)를 실측으로 검증한다.
-
-```
-초기 커밋 (v1) → 1 바이트 수정 후 커밋 (v2) → checkout v1 → 원본과 바이트 비교
-```
-
-- 파일 형식: `.fbx`
-- 파일 크기: 100 MB, 1 GB, 10 GB
-- 수정량: 1 바이트 (오프셋 지정)
-- 측정 항목: delta 파일 크기, commit 시간, checkout 시간, SHA256 검증 통과 여부
-
----
-
-### 시나리오 C — 대용량 파일 성능 (목표 지표 검증)
-
-> "10 GB 파일 delta 연산 10초 이내" 목표 달성 여부를 확인한다.
+하나의 캐릭터 프로젝트를 기반으로 모든 실험 진행
 
 ```
-10 GB 파일 초기 커밋 → 1 % 수정 → 재커밋 → checkout
-```
-
-- 파일 형식: `.fbx`, `/dev/urandom` 생성 바이너리
-- 파일 크기: 10 GB
-- 수정량: 1 바이트, 1 %, 10 %
-- 측정 항목: commit 시간, checkout 시간, 피크 메모리 사용량
-  (`/usr/bin/time -v` 또는 `valgrind --tool=massif`)
-
-> 비고: delta.cpp에 Producer-Consumer 멀티스레딩(Thread 1: 4MB 버퍼 디스크 읽기, Thread 2: Rolling Hash 연산)이 현재 구현 완료된 상태로 측정한다.
-
----
-
-### 시나리오 D — 압축 포맷 fallback 검증
-
-> `.jpg` 등 압축 파일에서 전체 저장 분기가 정상 동작하는지 확인한다.
-
-```
-jpg 파일 초기 커밋 → 1 바이트 수정 → 재커밋 → .vcs/objects/ 구조 확인
-```
-
-- 파일 형식: `.jpg`
-- 파일 크기: 100 MB
-- 수정량: 1 바이트
-- 측정 항목: delta 생성 여부 (delta 파일이 생성되지 않아야 함), 저장소 증가량
-
----
-
-### 시나리오 E — delta 체인 복원 정확성 (통합 검증)
-
-> delta 3개 이상 쌓은 후 checkout 시 바이트 단위 원본 일치를 확인한다.
-
-```
-v1 커밋 → v2 커밋 → v3 커밋 → checkout v1 → diff v1 원본
-```
-
-- 파일 형식: `.fbx`
-- 파일 크기: 100 MB
-- 수정량: 각 커밋마다 1 %
-- 측정 항목: `diff` 또는 SHA256 일치 여부, checkout 시간
-
----
-
-## 5. 반복 횟수 및 집계 방법
-
-- 모든 시나리오에서 **3회 반복 측정**
-- 집계: **3회 평균값** 사용 (이상값 존재 시 제외 후 명기)
-- 표준편차를 함께 기록하여 편차가 큰 경우 원인 분석
-
-```
-측정값 = (run1 + run2 + run3) / 3
+character_base.fbx      ← 기본 3D 메시 (모든 실험의 출발점)
+character_rigged.fbx    ← 본 추가된 fbx
+character_animated.fbx  ← 키프레임 추가된 fbx
+character_scene.fbx     ← 씬에 배치된 fbx
+texture_diffuse.tiff    ← 색상 텍스처 (비압축)
+texture_normal.tiff     ← 법선 텍스처 (비압축)
 ```
 
 ---
 
-## 6. 측정 도구 및 환경
+## 3. 시나리오별 실험 계획
 
-### 6.1 측정 도구
+### 시나리오 1 — Maya vs Blender 직렬화 비교 (한계 조건 탐색)
 
-| 항목            | 도구                                               |
-| --------------- | -------------------------------------------------- |
-| 실행 시간       | `time` 명령어 (`real` 값 기준)                     |
-| 메모리 사용량   | `/usr/bin/time -v` → `Maximum resident set size`   |
-| 저장소 크기     | `du -sb <경로>`                                    |
-| SHA256 검증     | `sha256sum`                                        |
-| 바이트 비교     | `diff` / `cmp`                                     |
-| 자동화 스크립트 | Python 3 (`subprocess`, `os`, `csv`, `matplotlib`) |
+| 항목      | 내용                                                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 대상      | `character_base.fbx` / 100MB (동일 모델, 두 툴)                                                                         |
+| 핵심      | Maya(Autodesk 공식 FBX SDK) vs Blender(리버스 엔지니어링 구현)의 직렬화 차이                                            |
+| 결과 활용 | Maya 효율 높음 → "공식 SDK 툴에서 완벽 동작" / 둘 다 낮음 → "폴리곤 편집 단계는 툴 무관하게 한계, 후반 파이프라인 타겟" |
+| 담당      | 강민경                                                                                                                  |
+| 스크립트  | 수동 실험 (Maya + Blender 실제 파일 필요)                                                                               |
 
-### 6.2 실험 환경
+**[케이스 A] 폴리곤 편집 (초기 모델링 단계)**
 
-> ** WSL 사용자 필수**: 반드시 WSL 네이티브 경로(`~/...`)에서 실행하세요.  
-> `/mnt/c/` 경로에서 실행하면 Windows NTFS ↔ WSL 파일시스템 변환 오버헤드로  
-> I/O 병목이 발생해 측정값이 **10~13배 왜곡**됩니다.
->
-> ```bash
-> # 프로젝트를 WSL 홈으로 복사 (최초 1회)
-> cp -r /mnt/c/.../designer_git ~/designer_git
->
-> # WSL에서 빌드
-> cd ~/designer_git
-> mkdir -p build && cd build
-> cmake .. && make -j4
->
-> # 벤치마크 실행 (sudo 필요 — 파일 시스템 캐시 플러시용)
-> cd ~/designer_git
-> sudo python3 benchmark/measure.py --dgit ./build/dgit --scenarios 2,3,6,7,8
-> ```
+Maya 작업:
 
+1. `File → Import → character_base.fbx` 열기
+2. 우클릭 → Face 선택 모드
+3. 폴리곤 하나 선택
+4. W키 → 이동툴로 5~10 units 이동
+5. `File → Export All → FBX` → `maya_poly_v2.fbx` 저장
+   Blender 작업:
+6. `File → Import → FBX → character_base.fbx` 열기
+7. Tab키 → Edit Mode → 동일한 폴리곤 선택
+8. G키 → 동일하게 이동
+9. `File → Export → FBX` → `blender_poly_v2.fbx` 저장
+   측정: `character_base.fbx → maya_poly_v2.fbx` delta 효율  
+   　　　`character_base.fbx → blender_poly_v2.fbx` delta 효율
+
+예상: Maya — 변경 폴리곤만 직렬화 → 효율 높을 수 있음  
+　　　Blender — Vertex Buffer 전체 재배치 → 효율 낮음
+
+**[케이스 B] 씬 어셈블리 (후반 파이프라인)**
+
+Maya 작업:
+
+1. `File → Import → character_base.fbx` 열기
+2. 오브젝트 선택 → W키 → X축으로 100 units 이동
+3. `File → Export All → FBX` → `maya_scene_v2.fbx` 저장
+   Blender 작업:
+4. `File → Import → FBX → character_base.fbx` 열기
+5. G키 → X키 → 100 입력 → Enter
+6. `File → Export → FBX` → `blender_scene_v2.fbx` 저장
+   예상: Transform 값만 변경 → 두 툴 모두 효율 높을 가능성  
+   　　　→ "폴리곤 편집만 비효율, 후반 작업은 툴 무관" 결론 가능
+
+**[케이스 C] 애니메이션 키프레임 수정 (후반 파이프라인)**
+
+Maya 작업:
+
+1. `File → Import → character_base.fbx` 열기
+2. `Window → Animation Editors → Graph Editor` 열기
+3. 30프레임 → 특정 Joint 선택 → 회전값 45° → 60° 수정
+4. `File → Export All → FBX` → `maya_anim_v2.fbx` 저장
+   Blender 작업:
+5. `File → Import → FBX → character_base.fbx` 열기
+6. 30프레임으로 이동 → R키 → 동일하게 회전값 수정 → I키 → 키프레임 삽입
+7. `File → Export → FBX` → `blender_anim_v2.fbx` 저장
+   예상: AnimationCurve 데이터만 변경 → 두 툴 모두 효율 높을 가능성
+
+---
+
+### 시나리오 2 — 파이프라인 단계별 delta 효율 (핵심 증명)
+
+| 항목     | 내용                                                               |
+| -------- | ------------------------------------------------------------------ |
+| 대상     | 각 단계별 파일 / Maya 실제 작업                                    |
+| 목적     | 후반 파이프라인 각 단계에서 실제 현업 툴로 작업 후 delta 효율 실측 |
+| 예상     | 텍스처링·리깅·애니메이션·씬 어셈블리 모두 90%+ 절감                |
+| 담당     | 강민경                                                             |
+| 스크립트 | `scenario2_pipeline_efficiency.py`                                 |
+
+**[2-1] 텍스처링 — Substance Painter**
+
+> 비압축 TIFF 출력 필수: `Export Textures → Compression: None`  
+> 기본값이 압축일 수 있으니 반드시 확인 (압축 선택 시 delta 효율 0%로 하락)
+
+작업: 캐릭터 특정 부위(옷 일부 등) 색상 수정 후 TIFF 비압축으로 내보내기  
+측정: `texture_v1.tiff → texture_v2.tiff` delta 효율  
+예상: 수정 픽셀 영역만 변경 → **효율 90%+**
+
+**[2-2] 리깅 — Maya**
+
+작업:
+
+1. `File → Import → character_base.fbx` 열기
+2. `Skeleton → Create Joints` → 허리/어깨/팔꿈치 Joint 3~4개 추가
+3. `File → Export All → FBX` → `character_rigged.fbx` 저장
+   측정: `character_base.fbx → character_rigged.fbx` delta 효율  
+   예상: 수백MB 메시 데이터 유지, 본 데이터(수KB)만 추가 → **효율 90%+**
+
+**[2-3] 애니메이션 — Maya**
+
+작업:
+
+1. `File → Import → character_rigged.fbx` 열기
+2. `Graph Editor` → 30프레임 → 어깨 Joint 회전값 45° → 60° 수정
+3. `File → Export All → FBX` → `character_animated.fbx` 저장
+   측정: `character_rigged.fbx → character_animated.fbx` delta 효율  
+   예상: AnimationCurve 숫자값만 수정, 메시/본 구조 유지 → **효율 90%+**
+
+**[2-4] 씬 어셈블리 — Maya**
+
+작업:
+
+1. `File → Import → character_animated.fbx` 열기
+2. 캐릭터 오브젝트 선택 → W키 → X축 100 units 이동, R키 → Y축 45° 회전
+3. `File → Export All → FBX` → `character_scene.fbx` 저장
+   측정: `character_animated.fbx → character_scene.fbx` delta 효율  
+   예상: Transform 값(위치/회전) 몇 바이트만 변경 → **효율 90%+**
+
+---
+
+### 시나리오 3 — Git LFS vs designer-git 누적 저장소 비교 (임팩트 시각화)
+
+| 항목     | 내용                                                                         |
+| -------- | ---------------------------------------------------------------------------- |
+| 대상     | `texture.tiff` (비압축) / 반복 커밋 10회                                     |
+| 목적     | 반복 커밋 시 누적 저장소 크기 차이를 수치와 그래프로 시각화                  |
+| 예상     | Git LFS: 100MB × 10 = ~1GB / designer-git: 100MB + delta 수십KB × 9 ≈ ~100MB |
+| 담당     | 강민경                                                                       |
+| 스크립트 | `scenario3_storage_comparison.py`                                            |
+
+작업: Substance Painter에서 텍스처를 부위별로 조금씩 수정해 TIFF 비압축으로 10회 내보내기
+
+designer-git 측정:
+
+```bash
+dgit add texture.tiff
+dgit commit -m "v1"  # → dgit commit -m "v10"
+# 커밋마다 .vcs/ 크기 기록
 ```
-OS           : Ubuntu 22.04 LTS
-CPU          : (실험 시 기재)
-RAM          : (실험 시 기재)
-Storage      : (SSD / HDD 및 읽기 속도 기재)
-Compiler     : g++ -O2
-Git version  : (Git LFS 대조군용)
+
+Git LFS 측정:
+
+```bash
+git lfs track "*.tiff" && git add texture.tiff
+git commit -m "v1"   # → git commit -m "v10"
+# 커밋마다 .git/lfs/ 크기 기록
 ```
 
-## 7. 자동화 스크립트 구조
+측정: 커밋 횟수 vs 누적 저장소 크기 (로그 스케일 그래프)
 
-README 기준 프로젝트 구조 내 `benchmark/` 폴더에 위치한다.
+---
 
-```
-designer-git/
-├── src/
-│   ├── engine/    # Rolling Hash + Delta 엔진
-│   ├── vcs/       # 커밋 시스템 + 저장소 관리
-│   └── cli/       # CLI 명령어
-├── tests/         # 단위 테스트
-├── benchmark/                        ← 현재 폴더
-│   ├── run_all.sh                    # 전체 실험 일괄 실행 (WSL 네이티브 경로에서 실행할 것)
-│   ├── setup.py                      # 테스트 파일 생성 (fbx 모의, 랜덤 바이너리)
-│   ├── measure.py                    # 각 시나리오 실행 및 CSV 저장
-│   ├── plot.py                       # CSV → 그래프 생성
-│   ├── lfs-experiment.md             # Git LFS 실측 수치 기록
-│   ├── results/
-│   │   ├── scenario_a.csv
-│   │   ├── scenario_b.csv
-│   │   ├── scenario_c.csv
-│   │   ├── scenario_d.csv
-│   │   └── scenario_e.csv
-│   └── graphs/
-│       ├── storage_comparison.png    # 누적 저장소 크기 비교
-│       ├── commit_time.png           # commit 시간 비교
-│       └── checkout_time.png        # checkout 시간 비교
-└── docs/          # 문서 및 발표자료
+### 시나리오 4 — 수정량별 delta 효율 임계치 탐색 (경계 조건)
 
-```
+| 항목     | 내용                                                      |
+| -------- | --------------------------------------------------------- |
+| 대상     | `texture_v1.tiff` (100MB, 비압축)                         |
+| 목적     | 수정량이 얼마까지 증가해도 delta가 효율적인지 임계치 실측 |
+| 담당     | 강민경                                                    |
+| 스크립트 | `scenario4_threshold.py`                                  |
 
-### CSV 출력 형식 예시 (`scenario_a.csv`)
+| 케이스 | 수정 범위    | 작업                               | 예상 절감률               |
+| ------ | ------------ | ---------------------------------- | ------------------------- |
+| A      | 극소 (1~2px) | 브러시 1px, 눈 부위 점 하나        | **99%+**                  |
+| B      | 소량 (~10%)  | 브러시 중간, 얼굴 전체             | **90%+**                  |
+| C      | 중간 (~50%)  | 브러시 크게, 상반신 전체 색상 변경 | 절감률 감소 (임계치 근처) |
+| D      | 전체 (~100%) | 전체 레이어 색상/재질 전면 교체    | fullcopy 전환 확인        |
 
-```csv
-scenario,group,file_type,file_size_mb,modify_ratio,commit_no,run,storage_delta_mb,delta_file_kb,commit_time_s,checkout_time_s
-A,designer_git,fbx,100,0.01,1,1,0.12,120.0,0.43,0.21
-A,designer_git,fbx,100,0.01,1,2,0.11,118.5,0.41,0.20
-A,designer_git,fbx,100,0.01,1,3,0.13,121.2,0.44,0.22
-A,git_lfs,fbx,100,0.01,1,1,100.00,,1.20,0.95
-...
+측정: 수정 면적 비율 vs delta 크기 꺾은선 그래프 → 효율 임계치 도출
+
+---
+
+### 시나리오 5 — Early-exit 판단 시간 측정
+
+| 항목     | 내용                            |
+| -------- | ------------------------------- |
+| 대상     | `.fbx`, `.exr` / 100MB, 1GB     |
+| 작업     | 80%+ 변경 (Early-exit 트리거)   |
+| 예상     | 조기 종료 후 fullcopy 전환      |
+| **목표** | **1GB 기준 판단 시간 3초 이내** |
+| 측정     | Early-exit 판단 소요 시간       |
+| 스크립트 | `scenario5_early_exit.py`       |
+
+---
+
+### 시나리오 6 — 압축 포맷 fullcopy fallback 검증
+
+| 항목     | 내용                                           |
+| -------- | ---------------------------------------------- |
+| 대상     | `.jpg`, `.png` / 100MB (대조군: `.exr`)        |
+| 작업     | 1바이트 수정                                   |
+| 예상     | jpg/png: fullcopy 분기 동작 (delta 생성 안 됨) |
+| 측정     | delta 생성 여부, 저장소 증가량                 |
+| 스크립트 | `scenario6_compressed_fallback.py`             |
+
+---
+
+### 시나리오 7 — 1바이트 수정 이론치 검증
+
+| 항목     | 내용                                     |
+| -------- | ---------------------------------------- |
+| 대상     | `.exr`, `.fbx` (Maya) / 100MB, 1GB       |
+| 작업     | 1바이트 수정                             |
+| 예상     | delta 수 KB → **절감률 99.9%+**          |
+| 측정     | delta 크기, commit/checkout 시간, SHA256 |
+| 스크립트 | `scenario7_single_byte.py`               |
+
+---
+
+## 4. 시각화 계획
+
+1. **파이프라인 단계별 delta 효율 막대 그래프** (시나리오 2)  
+   텍스처링 / 리깅 / 애니메이션 / 씬 어셈블리 각 단계의 절감률
+2. **Git LFS vs designer-git 누적 저장소 크기 그래프** (시나리오 3)  
+   x축: 커밋 횟수, y축: 누적 저장소 크기(MB), 로그 스케일
+3. **Maya vs Blender delta 효율 비교 표** (시나리오 1)  
+   폴리곤 편집 / 씬 어셈블리 / 애니메이션 3가지 케이스 비교
+4. **수정량 vs delta 효율 꺾은선 그래프** (시나리오 4)  
+   수정 면적 비율에 따른 임계치 시각화
+5. **파이프라인 단계별 적용 가능성 요약 표**
+   | 단계 | delta 효율 | 이유 |
+   | ------------- | ---------- | --------------------------------- |
+   | 스컬핑/모델링 | X | Vertex Buffer 전체 재생성 |
+   | 텍스처링 | O | 픽셀 In-place 수정 (비압축 TIFF 기준) |
+   | 리깅 | O | 본 데이터만 추가 (Maya 기준) |
+   | 애니메이션 | O | 키프레임 값만 변경 |
+   | 씬 어셈블리 | O | Transform 값만 변경 |
+   | VFX 캐시 | O | 프레임 Insert (Rolling Hash 효과) |
+
+---
+
+## 5. 목표 수치
+
+| 측정 항목                                | 목표          |
+| ---------------------------------------- | ------------- |
+| 텍스처링 절감률 (TIFF 비압축, 소량 수정) | **90% 이상**  |
+| 리깅 절감률 (본 추가)                    | **90% 이상**  |
+| 애니메이션 절감률 (키프레임 수정)        | **90% 이상**  |
+| 씬 어셈블리 절감률 (Transform 수정)      | **90% 이상**  |
+| Git LFS 대비 누적 저장소 절감률          | **90% 이상**  |
+| commit 시간 (1GB)                        | **15초 이내** |
+| checkout 시간 (delta 체인 9개)           | **30초 이내** |
+| Early-exit 판단 시간 (1GB)               | **3초 이내**  |
+| SHA256 검증 통과율                       | **100%**      |
+| Maya vs Blender delta 효율 차이          | 실측 후 기재  |
+| 수정량 임계치 (fullcopy 전환 기준)       | 실측 후 기재  |
+
+---
+
+## 6. 실험 환경
+
+| 항목     | 사양                                      |
+| -------- | ----------------------------------------- |
+| OS       | Ubuntu 22.04 LTS (WSL2)                   |
+| CPU      | Intel Core i5-1155G7 @ 2.50GHz (11th Gen) |
+| RAM      | 8GB                                       |
+| Storage  | Samsung NVMe SSD 256GB                    |
+| Compiler | g++ -O2                                   |
+| Python   | 3.10+                                     |
+
+> **WSL 사용자 필수**: 반드시 WSL 네이티브 경로(`~/...`)에서 실행.  
+> `/mnt/c/` 경로에서 실행하면 I/O 병목으로 측정값이 **10~13배 왜곡**됩니다.
+
+---
+
+## 7. 스크립트 실행 방법
+
+```bash
+# 1. 프로젝트 WSL 홈으로 복사
+cp -r /mnt/c/.../designer_git ~/designer_git
+
+# 2. WSL에서 빌드
+cd ~/designer_git
+mkdir -p build && cd build
+cmake .. && make -j4
+
+# 3. 벤치마크 실행 (sudo 필요 — 파일 시스템 캐시 플러시용)
+cd ~/designer_git
+sudo python3 benchmark/measure.py --dgit ./build/dgit --scenarios 2,3,6,7,8
 ```
 
 ---
 
-## 8. 목표 수치 및 판정 기준
+## 8. 스크립트 파일 구조
 
-| 지표                                          | 목표 수치      | 판정 기준                                 |
-| --------------------------------------------- | -------------- | ----------------------------------------- |
-| 스토리지 절감률 (vs Git LFS, 1 % 수정 × 10회) | **90 % 이상**  | `(LFS 누적 - dgit 누적) / LFS 누적 × 100` |
-| commit 시간 (10 GB, 1 % 수정)                 | **10초 이내**  | `time` real 값                            |
-| checkout 시간 (delta 체인 9개 이하)           | **30초 이내**  | `time` real 값                            |
-| 피크 메모리 사용량 (10 GB 파일 처리 중)       | **50 MB 이하** | `/usr/bin/time -v` Maximum RSS            |
-| SHA256 검증 통과율                            | **100 %**      | checkout 후 원본과 해시 일치              |
-
----
-
-## 9. 예상 리스크 및 대응
-
-| 리스크               | 내용                                                   | 대응 방안                                                                                                                                 |
-| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| FBX 내부 재정렬      | 3D 툴 저장 시 메타데이터 재배치로 delta 효율 저하 가능 | 실측 후 효율 저하 원인 분석. 목표 미달 시 CDC 경계 조건 튜닝                                                                              |
-| 10 GB 처리 시간 초과 | I/O 병목으로 10초 초과 가능                            | Producer-Consumer 멀티스레딩 이미 적용됨. 초과 시 mmap 기반 I/O 최적화 추가 검토                                                          |
-| 메모리 초과          | 해시맵이 파일 크기에 비례 증가 (10GB 기준 ~36MB)       | IO 버퍼(8MB) + 해시맵(~36MB) 합산 기준 목표를 50MB로 조정. 추가 절감이 필요하면 해시맵 엔트리 크기 압축(BlockHash를 u128 1개로 통합) 검토 |
-| 실측치 ≠ 이론치      | 99.9 % 절감은 단일 정점 수정 + 비압축 FBX 가정 기반    | 이론치와 실측치를 별도 명기. 차이 원인을 발표에서 솔직하게 제시                                                                           |
-
----
+```
+benchmark/
+├── utils.py                          # 공통 유틸 (파일 생성, dgit 래퍼, CSV 저장)
+├── scenario2_pipeline_efficiency.py  # 파이프라인 단계별 delta 효율
+├── scenario3_storage_comparison.py   # LFS vs designer-git 누적 저장소 비교
+├── scenario4_threshold.py            # 수정량별 임계치 탐색
+├── scenario5_early_exit.py           # Early-exit 판단 시간
+├── scenario6_compressed_fallback.py  # 압축 포맷 fullcopy 분기
+├── scenario7_single_byte.py          # 1바이트 수정 이론치
+├── measure.py                        # 일괄 실행 (--dgit, --scenarios 옵션)
+└── results/
+    ├── scenario2_pipeline_efficiency.csv
+    ├── scenario3_storage_comparison.csv
+    ├── scenario4_threshold.csv
+    ├── scenario5_early_exit.csv
+    ├── scenario6_compressed_fallback.csv
+    └── scenario7_single_byte.csv
+```
