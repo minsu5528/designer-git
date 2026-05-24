@@ -1,19 +1,106 @@
-# 실험 3 Git LFS 10회 커밋 결과 정리
+# 실험 3. Git LFS vs designer-git 누적 저장소 비교
 
-## 1. 실험 위치 및 조건
+## 1. 실험 목적
 
-- 실험 위치: `~/designer_git/benchmark/exp3_git_lfs`
-- 실행 환경: Ubuntu WSL2 홈 디렉터리 기준
-- 금지 조건: `/mnt/c` 경로 사용하지 않음
-- 입력 파일: `tex_v1_uncompressed.tif` ~ `tex_v10_uncompressed.tif`
-- 커밋 방식: 매 회차마다 `texture.tiff`를 해당 버전으로 덮어쓴 뒤 Git LFS commit
-- 측정 대상:
-  - `.git/lfs` 누적 크기
-  - `.git` 전체 크기
-  - 작업 파일 크기
-  - commit 시간
+본 실험은 **비압축 TIFF 텍스처 파일을 10회 반복 수정·커밋했을 때 Git LFS와 designer-git(dgit)의 누적 저장소 크기가 어떻게 달라지는지** 비교하기 위한 실험이다.
 
-## 2. 원본 CSV
+3D/VFX 및 게임 제작 파이프라인에서는 텍스처 파일이 수십~수백 MB 단위로 커질 수 있으며, 실제 후반 작업에서는 전체 파일을 새로 만드는 것이 아니라 얼굴, 의상, 장갑, 갑옷 등 특정 부위만 조금씩 수정하는 경우가 많다. 이때 Git LFS는 각 버전의 바이너리 파일을 LFS 객체로 저장하는 반면, dgit은 CDC 기반 delta 저장을 통해 변경분 중심 저장을 목표로 한다.
+
+따라서 본 실험에서는 같은 텍스처 파일을 `v1`부터 `v10`까지 조금씩 수정하고, 이를 Git LFS와 dgit에 각각 10회 커밋하여 누적 저장소 크기를 비교했다.
+
+---
+
+## 2. 실험 전 파일 분석
+
+### 2.1 사용 모델
+
+실험에는 3D 모델링 에셋 사이트 FAB에서 다운로드한 `fantasy-knight-girl` 모델을 사용했다. 해당 모델은 하이폴리곤 캐릭터 에셋이며, 대용량 텍스처와 복잡한 UV 구조를 포함하고 있어 dgit의 delta 저장 효율을 확인하기에 적합하다고 판단했다.
+
+![fantasy-knight-girl의 텍스처](images/image-1.png)
+
+### 2.2 텍스처 구성
+
+`fantasy-knight-girl` 모델의 텍스처는 크게 Hair, Knight, Mouth, Teeth 네 가지 텍스처 세트로 나뉘어 있었다. Substance 3D Painter에서 텍스처 작업을 수행했을 때 이 텍스처 세트들이 하나로 합쳐지지 않았으므로, 본 실험에서는 주요 캐릭터 텍스처인 **Knight 텍스처 세트만 사용**했다.
+
+| 텍스처 세트 | 설명 |
+|---|---|
+| Hair | 머리카락 텍스처 |
+| Knight | 갑옷, 의상, 피부 등 주요 캐릭터 텍스처 |
+| Mouth | 입 내부 텍스처 |
+| Teeth | 치아 텍스처 |
+
+### 2.3 3D 텍스처 작업의 변수
+
+일반적인 2D 이미지 편집에서는 화면에서 수정한 영역과 실제 파일 내부 변경 위치가 비교적 직관적으로 대응된다. 그러나 3D 텍스처 작업에서는 3D 표면이 UV 좌표를 통해 2D 텍스처 이미지에 펼쳐져 저장된다. 따라서 사용자가 3D 모델에서 특정 부위만 수정했다고 보더라도, 실제 TIFF 파일 내부에서는 여러 위치가 함께 변경될 수 있다.
+
+본 실험에서도 다음과 같은 변수가 관찰되었다.
+
+- 3D 모델에서 한 부위만 수정해도 UV 연결로 인해 다른 부위까지 함께 변경될 수 있다.
+- 대칭 UV 또는 공유 UV 때문에 한쪽 수정이 반대쪽에도 반영될 수 있다.
+- Substance 3D Painter의 projection, padding, dilation, anti-aliasing 등의 영향으로 주변 픽셀도 함께 변경될 수 있다.
+- 결과적으로 시각적으로는 작은 수정이라도 파일 내부에서는 여러 블록에 분산되어 저장될 수 있다.
+
+예를 들어 v1에서 v2로 넘어갈 때 얼굴에 블러셔를 추가했지만, UV 연결로 인해 눈 주변 텍스처 등 여러 위치가 함께 수정되었다. 따라서 실험 결과를 해석할 때는 **시각적 수정 면적**과 **파일 내부 변경 분포**를 구분해야 한다.
+
+---
+
+## 3. 실험 과정
+
+### 3.1 버전별 수정 내용
+
+원본 텍스처를 `v1`로 두고, 이후 얼굴, 옷, 장갑, 신발, 다리 갑옷 등 여러 부위를 조금씩 수정하여 `v10`까지 생성했다.
+
+| 버전 | 수정 내용 | 이미지 |
+|---|---|---|
+| v1 | 원본 텍스처 | ![v1 원본](images/image-2.png) |
+| v2 | 얼굴 블러셔 수정 | ![v2 얼굴 수정](images/image-3.png) |
+| v3 | 옷 부위 수정 | ![v3 옷 수정](images/image-4.png) |
+| v4 | 장갑 국소 수정 | ![v4 장갑 수정](images/image-5.png) |
+| v5 | 다리 국소 수정 | ![v5 다리 수정](images/image-6.png) |
+| v6 | 얼굴 코끝 블러셔 수정 | ![v6 얼굴 수정](images/image-7.png) |
+| v7 | 어깨 갑옷 국소 수정 | ![v7 어깨 갑옷 수정](images/image-8.png) |
+| v8 | 장갑 국소 수정 | ![v8 장갑 수정](images/image-9.png) |
+| v9 | 부츠 국소 수정 | ![v9 부츠 수정](images/image-10.png) |
+| v10 | 다리 갑옷 부위 국소 수정 | ![v10 다리 갑옷 수정](images/image-11.png) |
+
+v3의 경우 3D 모델에서는 옷의 두 군데가 수정된 것처럼 보였지만, 실제로는 UV 좌표 및 대칭 구조 때문에 텍스처의 한 영역이 여러 3D 표면에 반영된 결과였다.
+
+### 3.2 커밋 방식
+
+각 버전은 모두 동일한 파일명 `texture.tiff`로 덮어쓴 뒤 커밋했다.
+
+```text
+v1 → texture.tiff → commit
+v2 → texture.tiff → commit
+...
+v10 → texture.tiff → commit
+```
+
+이 방식은 Git LFS와 dgit 모두에서 “동일한 파일이 10번 수정되어 커밋되는 상황”을 재현하기 위한 것이다.
+
+---
+
+## 4. 실험 위치 및 조건
+
+| 항목 | 내용 |
+|---|---|
+| 실험 위치 | `~/designer_git/benchmark` |
+| Git LFS 실험 위치 | `~/designer_git/benchmark/exp3_git_lfs` |
+| dgit 실험 위치 | `~/designer_git/benchmark/exp3_dgit` |
+| 실행 환경 | Ubuntu WSL2 홈 디렉터리 |
+| 금지 조건 | `/mnt/c` 경로 사용 금지 |
+| 입력 파일 | `tex_v1_uncompressed.tif` ~ `tex_v10_uncompressed.tif` |
+| 파일 형식 | 비압축 TIFF |
+| 작업 파일명 | `texture.tiff` |
+| 측정 대상 | 누적 저장소 크기, 저장 방식, commit 시간 |
+
+`/mnt/c` 경로는 WSL2에서 I/O 병목이 커 측정값이 왜곡될 수 있으므로 사용하지 않았다. 실험 파일은 Ubuntu 홈 디렉터리 아래에서 측정했다.
+
+---
+
+## 5. Git LFS 10회 커밋 결과
+
+### 5.1 원본 CSV
 
 ```csv
 commit_no,commit_id,lfs_bytes,git_bytes,work_file_bytes,commit_sec
@@ -29,9 +116,9 @@ commit_no,commit_id,lfs_bytes,git_bytes,work_file_bytes,commit_sec
 10,e71c05c40329ae2aee7b7398a9ebd49c7eed3b9f,1006881180,1006915983,100688118,0.16
 ```
 
-## 3. 정리 표
+### 5.2 정리 표
 
-| commit | commit_id | lfs_bytes | lfs_MB | git_bytes | git_MB | work_file_MB | commit_sec |
+| commit | commit_id | `.git/lfs` bytes | `.git/lfs` MB | `.git` bytes | `.git` MB | 작업 파일 MB | commit sec |
 |---:|---|---:|---:|---:|---:|---:|---:|
 | 1 | `85a9410` | 100,688,118 | 100.69 | 100,716,946 | 100.72 | 100.69 | 0.06 |
 | 2 | `398c547` | 201,376,236 | 201.38 | 201,405,728 | 201.41 | 100.69 | 0.09 |
@@ -44,7 +131,7 @@ commit_no,commit_id,lfs_bytes,git_bytes,work_file_bytes,commit_sec
 | 9 | `2e3ef50` | 906,193,062 | 906.19 | 906,227,197 | 906.23 | 100.69 | 0.12 |
 | 10 | `e71c05c` | 1,006,881,180 | 1006.88 | 1,006,915,983 | 1006.92 | 100.69 | 0.16 |
 
-## 4. Git LFS 객체 확인 결과
+### 5.3 Git LFS 객체 확인
 
 아래 명령어로 Git LFS 객체 파일을 확인했다.
 
@@ -67,43 +154,11 @@ find .git/lfs -type f -printf '%s %p\n' | sort -nr | head -20
 100688118 .git/lfs/objects/21/43/2143037e52240e2245222438884e346303031bc334a83f9e0231bd9aa6f1b17
 ```
 
-즉, Git LFS는 `texture.tiff`가 변경될 때마다 이전 버전과의 delta를 저장하지 않고, 각 버전의 TIFF 파일 전체를 LFS 객체로 저장한 것으로 확인된다.
+즉, Git LFS는 `texture.tiff`가 변경될 때마다 이전 버전과의 delta를 저장하지 않고, 각 버전의 TIFF 파일 전체를 LFS 객체로 저장했다.
 
-## 5. 핵심 요약
+---
 
-- 원본 TIFF 1개 크기: **100,688,118 bytes ≈ 100.69 MB**
-- 원본 10개를 통째로 저장할 경우: **1,006,881,180 bytes ≈ 1006.88 MB**
-- Git LFS 최종 `.git/lfs` 크기: **1,006,881,180 bytes ≈ 1006.88 MB**
-- Git 전체 `.git` 최종 크기: **1,006,915,983 bytes ≈ 1006.92 MB**
-- 총 commit 시간: **2.53초**
-- 평균 commit 시간: **0.25초**
-
-## 6. Git LFS 누적 저장 특성
-
-```text
-TIFF 1개 크기 × 10회 커밋
-= 100,688,118 × 10
-= 1,006,881,180 bytes
-```
-
-실측된 Git LFS 최종 `.git/lfs` 크기는 다음과 같다.
-
-```text
-Git LFS 최종 .git/lfs 크기
-= 1,006,881,180 bytes
-```
-
-따라서 이번 실험에서는 다음 관계가 성립한다.
-
-```text
-Git LFS 최종 .git/lfs 크기 = 원본 TIFF 10개 전체 크기
-```
-
-즉, Git LFS는 10회 커밋 동안 각 버전의 비압축 TIFF를 거의 그대로 누적 저장했다.
-
-## 7. dgit 결과와 비교
-
-이전에 수행한 dgit 결과와 비교하면 다음과 같다.
+## 6. dgit 결과와 Git LFS 비교
 
 | 방식 | 기준 | 최종 크기 | MB 환산 | Git LFS 대비 절감률 |
 |---|---|---:|---:|---:|
@@ -111,9 +166,11 @@ Git LFS 최종 .git/lfs 크기 = 원본 TIFF 10개 전체 크기
 | dgit | base + delta payload | 167,746,891 bytes | 167.75 MB | 83.34% |
 | dgit | `.vcs` 전체, snapshot 포함 | 268,439,395 bytes | 268.44 MB | 73.34% |
 
-dgit은 10번째 커밋에서 복원 성능을 위한 snapshot 파일을 생성했기 때문에 `.vcs` 전체 기준 크기는 payload 기준보다 커졌다. 그러나 snapshot을 포함한 실제 저장소 크기 기준으로도 Git LFS 대비 약 **73.34%** 더 적은 공간을 사용했다.
+Git LFS는 10회 커밋 후 `.git/lfs` 크기가 원본 TIFF 10개를 그대로 누적한 값과 동일하게 증가했다. 반면 dgit은 base와 delta를 중심으로 저장하여 순수 payload 기준 약 **83.34%**, snapshot 포함 실제 저장소 크기 기준 약 **73.34%**의 저장 공간 절감을 보였다.
 
-## 8. dgit snapshot 생성에 대한 추가 분석
+---
+
+## 7. dgit snapshot 생성 분석
 
 dgit의 `.vcs` 전체 크기를 해석할 때는 delta payload와 snapshot을 구분해야 한다. 이번 실험에서 dgit은 10번째 커밋 시점에 복원 성능을 위한 snapshot 파일을 추가로 생성했다.
 
@@ -133,7 +190,7 @@ dgit의 `.vcs` 전체 크기를 해석할 때는 delta payload와 snapshot을 �
 1797846 .vcs/objects/deltas/dbe4b9405db665fa.delta
 ```
 
-즉, 10번째 커밋에서 `.vcs` 크기가 약 100MB 증가한 것은 delta 생성 실패나 fullcopy 전환 때문이 아니라, dgit의 snapshot 정책 때문에 `4167b0a32f545d11.snap` 파일이 추가로 저장되었기 때문이다.
+10번째 커밋에서 `.vcs` 크기가 약 100MB 증가한 것은 delta 생성 실패나 fullcopy 전환 때문이 아니라, dgit의 snapshot 정책 때문에 `4167b0a32f545d11.snap` 파일이 추가로 저장되었기 때문이다.
 
 | 항목 | 크기 | 의미 |
 |---|---:|---|
@@ -141,21 +198,29 @@ dgit의 `.vcs` 전체 크기를 해석할 때는 delta payload와 snapshot을 �
 | v10 delta | 3,222,394 bytes | 10번째 커밋의 실제 delta |
 | v10 snapshot | 100,688,118 bytes | 10번째 커밋에서 생성된 복원용 snapshot |
 
-따라서 dgit 결과는 두 가지 기준으로 나누어 해석해야 한다.
+dgit은 2~10회차를 delta로 저장했지만, 10회 커밋마다 snapshot을 하나 생성하는 정책 때문에 10번째 커밋에서 원본 크기와 동일한 약 100.69MB의 snapshot이 추가되었다. 따라서 dgit의 실제 저장소 크기는 순수 delta payload보다 커진다. 그러나 snapshot을 포함하더라도 Git LFS의 `.git/lfs` 크기 1,006.88MB보다 훨씬 작다.
 
-| 기준 | 크기 | Git LFS 대비 절감률 | 해석 |
-|---|---:|---:|---|
-| base + delta payload | 167,746,891 bytes, 약 167.75 MB | 83.34% | 순수 delta 저장 효율 |
-| `.vcs` 전체, snapshot 포함 | 268,439,395 bytes, 약 268.44 MB | 73.34% | 실제 디스크 사용량 |
+이 snapshot은 저장 공간만 보면 추가 비용이지만, checkout 또는 복원 시 모든 delta를 처음부터 순차 적용하지 않도록 하는 중간 기준점 역할을 한다. 즉, dgit은 저장 공간 절감과 복원 성능 사이에서 절충을 수행하며, 이번 실험의 `.vcs` 전체 크기에는 이 복원 성능 최적화 비용이 포함되어 있다.
 
-이번 실험에서 dgit은 2~10회차를 delta로 저장했지만, 10회 커밋마다 snapshot을 하나 생성하는 정책 때문에 10번째 커밋에서 원본 크기와 동일한 약 100.69MB의 snapshot이 추가되었다. 따라서 dgit의 실제 저장소 크기는 순수 delta payload보다 커지지만, snapshot을 포함하더라도 Git LFS의 `.git/lfs` 크기 1,006.88MB보다 훨씬 작다.
+---
 
-이 snapshot은 저장 공간만 보면 추가 비용이지만, checkout 또는 복원 시 모든 delta를 처음부터 순차 적용하지 않도록 하는 중간 기준점 역할을 한다. 즉 dgit은 저장 공간 절감과 복원 성능 사이에서 절충을 수행하며, 이번 실험의 `.vcs` 전체 크기에는 이 복원 성능 최적화 비용이 포함되어 있다.
+## 8. 핵심 요약
 
-## 9. 보고서용 결론 초안
+- 원본 TIFF 1개 크기: **100,688,118 bytes ≈ 100.69 MB**
+- 원본 10개를 통째로 저장할 경우: **1,006,881,180 bytes ≈ 1006.88 MB**
+- Git LFS 최종 `.git/lfs` 크기: **1,006,881,180 bytes ≈ 1006.88 MB**
+- Git 전체 `.git` 최종 크기: **1,006,915,983 bytes ≈ 1006.92 MB**
+- dgit base + delta payload 크기: **167,746,891 bytes ≈ 167.75 MB**
+- dgit snapshot 포함 `.vcs` 전체 크기: **268,439,395 bytes ≈ 268.44 MB**
+- dgit 순수 payload 기준 Git LFS 대비 절감률: **83.34%**
+- dgit snapshot 포함 실제 저장소 기준 Git LFS 대비 절감률: **73.34%**
+
+---
+
+## 9. 결론
 
 Git LFS는 10회 커밋 후 `.git/lfs` 디렉터리 크기가 **1,006.88 MB**로 증가했다. 이는 원본 TIFF 1개 크기인 **100.69 MB**가 10개 누적된 값과 정확히 일치한다. 또한 `.git/lfs/objects` 내부에 **100,688,118 bytes** 크기의 객체가 10개 생성된 것이 확인되었다.
 
-반면 dgit은 동일한 10회 커밋에서 base + delta payload 기준 약 **167.75 MB**, snapshot을 포함한 실제 `.vcs` 전체 기준 약 **268.44 MB**를 사용했다. 특히 dgit은 10회 커밋마다 snapshot을 생성하는 정책을 사용하므로, 10번째 커밋에서 약 **100.69 MB**의 snapshot 파일이 추가되었다. 따라서 dgit은 Git LFS 대비 순수 payload 기준 약 **83.34%**, snapshot을 포함한 실제 저장소 크기 기준 약 **73.34%**의 저장 공간 절감을 보였다.
+반면 dgit은 동일한 10회 커밋에서 base + delta payload 기준 약 **167.75 MB**, snapshot을 포함한 실제 `.vcs` 전체 기준 약 **268.44 MB**를 사용했다. 특히 dgit은 10회 커밋마다 snapshot을 생성하는 정책을 사용하므로, 10번째 커밋에서 약 **100.69 MB**의 snapshot 파일이 추가되었다. 그럼에도 dgit은 Git LFS 대비 순수 payload 기준 약 **83.34%**, snapshot을 포함한 실제 저장소 크기 기준 약 **73.34%**의 저장 공간 절감을 보였다.
 
 이 결과는 비압축 TIFF처럼 내부의 일부 영역만 수정되는 대용량 바이너리 파일에 대해, Git LFS는 버전별 전체 파일을 누적 저장하는 반면 dgit은 변경분 중심 저장으로 누적 저장소 증가량을 크게 줄일 수 있음을 보여준다. 다만 dgit은 일정 커밋 간격마다 snapshot을 추가로 저장하므로, 최종 저장소 크기를 해석할 때는 순수 delta payload와 snapshot 포함 실제 디스크 사용량을 구분해야 한다.
