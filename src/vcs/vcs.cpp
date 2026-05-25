@@ -8,6 +8,7 @@
 #include <vector>
 #include <algorithm>
 #include <openssl/evp.h>
+#include "tiff_utils.h"
 #include "json.hpp"
 #include "vcs.h"
 #include "../engine/delta.h"
@@ -392,6 +393,27 @@ std::string commit(const std::string& repo_path, const std::string& message, con
         return "";
     }
 
+    // ── TIFF 자동 압축 해제 ─────────────────────────────────
+    // 압축 TIFF가 들어오면 비압축 임시파일로 변환 후 delta 처리
+    // 사용자는 압축 TIFF를 그대로 add → commit 하면 됨
+    std::string effective_target = target_file;
+    fs::path tiff_decomp_tmp;
+ 
+    if (is_tiff_file(target_file) && is_tiff_compressed(target_file))
+    {
+
+        tiff_decomp_tmp = vcs_path / ("tiff_dc_"
+            + fs::path(target_file).stem().string() + ".tif");
+ 
+        if (decompress_tiff_to(target_file, tiff_decomp_tmp.string()))
+        {
+            effective_target = tiff_decomp_tmp.string();
+            // 압축 해제 성공 시 effective_target을 delta 대상으로 사용
+        }
+
+        // 실패 시 effective_target = target_file 그대로 유지 (원본 경로 폴백)
+    }
+
     // 1. 타임스탬프 & 부모 ID
     std::string timestamp = get_current_timestamp();
     std::string parent_id = read_head(vcs_path);
@@ -419,16 +441,16 @@ std::string commit(const std::string& repo_path, const std::string& message, con
     // 4. 최초 커밋: base에 파일 통째로 복사
     if (!fs::exists(base_file))
     {
-        file_sha256 = sha256_file(target_file);
-        fs::copy_file(target_file, base_file,
+        file_sha256 = sha256_file(effective_target);
+        fs::copy_file(effective_target, base_file,
             fs::copy_options::overwrite_existing);
-        uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+        uint64_t file_size = static_cast<uint64_t>(fs::file_size(effective_target));
         meta.files.push_back({ target_file, "", true, file_sha256, file_size });
     }
     else
     {
         // 압축 포맷이면 delta 대신 전체 저장 (Git LFS 방식과 동일)
-        if (is_compressed_format(target_file))
+        if (is_compressed_format(effective_target))
         {
             file_sha256 = sha256_file(target_file);
             fs::copy_file(target_file, base_file,
@@ -467,7 +489,7 @@ std::string commit(const std::string& repo_path, const std::string& message, con
             }
 
             // 사전 샘플링 — 변경률 높으면 전체 저장으로 전환
-            if (should_use_full_copy(prev_file.string(), target_file))
+            if (should_use_full_copy(prev_file.string(), effective_target))
             {
                 if (!parent_id.empty() && fs::exists(prev_file))
                     fs::remove(prev_file);
@@ -482,7 +504,7 @@ std::string commit(const std::string& repo_path, const std::string& message, con
             else
             {
                 int ret = delta_create(prev_file.string().c_str(),
-                    target_file.c_str(),
+                    effective_target.c_str(),
                     delta_path.string().c_str(),
                     &file_sha256);
 
@@ -499,7 +521,7 @@ std::string commit(const std::string& repo_path, const std::string& message, con
                 }
 
                 // delta 커밋
-                uint64_t file_size = static_cast<uint64_t>(fs::file_size(target_file));
+                uint64_t file_size = static_cast<uint64_t>(fs::file_size(effective_target));
                 meta.files.push_back(
                     { target_file, "objects/deltas/" + delta_filename, false, file_sha256, file_size });
             }
@@ -519,6 +541,9 @@ std::string commit(const std::string& repo_path, const std::string& message, con
     {
         save_snapshot(vcs_path, commit_id, target_file);
     }
+
+    if (!tiff_decomp_tmp.empty() && fs::exists(tiff_decomp_tmp))
+         fs::remove(tiff_decomp_tmp);
 
     write_head(vcs_path, commit_id);
     return commit_id;
