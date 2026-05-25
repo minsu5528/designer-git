@@ -68,4 +68,5 @@ src/engine/test.delta
 .DS_Store
 Thumbs.db
 
-.experiments/.vcs/
+benchmark/experiments/
+.vcs/
