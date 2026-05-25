@@ -1,0 +1,5 @@
+index,case,label,changed_blocks,total_blocks,changed_block_ratio,stored_kind,delta_efficiency,stored_MB,repo_increase_MB
+0,caseA_tiny,A 극소량,2,25,8.0,delta,99.9,0.1,0.1
+1,caseB_uv_small,B UV 소량,17,25,68.0,delta,62.68,37.58,37.58
+2,caseC_medium,C 중간,24,25,96.0,fullcopy,0.0,100.69,100.69
+3,caseD_full,D 전체,25,25,100.0,fullcopy,0.0,100.69,100.69

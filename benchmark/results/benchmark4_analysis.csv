@@ -1,0 +1,8 @@
+index,pipeline_stage,status,score,evidence,interpretation
+0,초기 모델링 / 폴리곤 편집,X,0.0,"Blender poly fullcopy, 0.00%",Vertex Buffer 재생성 가능성 큼
+1,텍스처링 - 극소량 수정,O,2.0,"caseA delta, 99.90%",비압축 TIFF에서 매우 효율적
+2,텍스처링 - UV 소량 수정,△,1.0,"caseB_uv delta, 62.68%",UV 분산 시 효율 감소
+3,텍스처링 - 중간/전체 수정,X,0.0,"caseC/D fullcopy, 0.00%",변경 블록 과다로 fullcopy
+4,애니메이션,△,1.0,"Blender anim delta, 44.14%",delta 가능하지만 효율은 중간
+5,씬 어셈블리,△,1.0,"Blender scene delta, 45.69%",delta 가능하지만 효율은 중간
+6,리깅,TBD,NaN,별도 측정 필요,Maya rigging 실험값 필요
