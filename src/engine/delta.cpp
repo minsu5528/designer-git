@@ -24,12 +24,12 @@ namespace fs = std::filesystem;
 
 // ── CDC 상수 ──────────────────────────────────────────────────
 static const size_t   IO_BUF_SIZE  = 4  * 1024 * 1024; // 4MB I/O 버퍼 (디스크 읽기 단위)
-static const size_t   MIN_CHUNK    = 4  * 1024;          // 최소 블록 4KB  (과분할 방지)
-static const size_t   MAX_CHUNK    = 64 * 1024;          // 최대 블록 64KB (과대 청크 방지)
+static const size_t   MIN_CHUNK    = 1  * 1024;          // 최소 블록 1KB  (과분할 방지)
+static const size_t   MAX_CHUNK    = 16 * 1024;          // 최대 블록 16KB (과대 청크 방지)
 static const size_t   WINDOW_SIZE  = 64;                 // 슬라이딩 윈도우 (경계 안정성 ↔ 비용 균형)
 static const uint64_t CDC_BASE     = 257ULL;             // 롤링 해시 기저 (CDC 경계 탐지용)
 //static const uint64_t CDC_MOD      = 1000000007ULL;      // 롤링 해시 모듈러
-static const uint64_t CDC_MASK     = 16383ULL;           // (2^14-1): P(hit)≈1/16384 → 평균 ~16KB 블록
+static const uint64_t CDC_MASK     = 4095ULL;            // (2^12-1): P(hit)≈1/4096 → 평균 ~4KB 블록
 static const uint64_t HASH_BASE    = 131ULL;             // 블록 내용 해시 기저 (이중 해시 충돌 완화용)
 static const uint64_t HASH_MOD     = 998244353ULL;       // 블록 내용 해시 모듈러 (CDC_MOD와 다른 소수)
 
@@ -131,7 +131,7 @@ static int build_hash_map(
     auto file_sz = fs::file_size(path, ec);
     if (!ec && file_sz > 0) {
         size_t estimated = static_cast<size_t>(
-            std::max<uint64_t>(1, file_sz / 16384));
+            std::max<uint64_t>(1, file_sz / 4096));
         map.reserve(estimated * 2);
     }
 
