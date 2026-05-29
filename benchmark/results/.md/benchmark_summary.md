@@ -54,6 +54,29 @@ designer-git은 변경분(delta)만 저장하여 저장소 증가량을 최소�
 > 10회차 snapshot(복원 성능용, ~100MB) 포함 기준 **73.34% 절감**
 > 순수 delta payload 기준 **83.34% 절감**
  
+**스냅샷(Snapshot) 정책**
+ 
+designer-git은 매 10커밋마다 스냅샷을 자동 생성한다.
+스냅샷은 해당 시점의 파일 전체 복사본으로, checkout 시 delta를 처음부터 순차 적용하지 않아도 되는 복원 성능 최적화 목적이다.
+ 
+```
+스냅샷 없을 때: base → delta1 → delta2 → ... → delta10 (전체 chain 재생)
+스냅샷 있을 때: snapshot(10회차) → 바로 복원 (chain 재생 불필요)
+```
+ 
+10회차에서 `.vcs` 전체가 ~100MB 증가한 것은 delta 실패가 아닌 스냅샷 생성 때문이다.
+ 
+**커밋 소요 시간**
+ 
+| 방식 | 평균 커밋 시간 | 비고 |
+|------|:-------------:|------|
+| Git LFS | 0.25s | 10회 합계 2.53s |
+| dgit (delta) | 약 2~3s | delta 연산 포함 |
+| dgit (fullcopy) | 약 1s | 변경 블록 80% 초과 시 |
+ 
+> dgit 커밋이 Git LFS보다 느린 이유: CDC 기반 delta 연산(블록 해시 비교, 변경 블록 탐지)이 추가로 수행됨
+> checkout(복원) 시간: 약 5s (delta chain 순차 적용)
+ 
 ---
  
 ### 3-2. 수정량별 delta 효율 분석 (TIFF, 3회 반복)
@@ -110,6 +133,23 @@ character_base.bin → character_anim_v2.bin   (케이스 C: 애니메이션 키
 ---
  
 ### 3-5. TIFF 자동 압축 해제 구현 결과
+ 
+**왜 압축 TIFF는 delta가 안 되는가**
+ 
+Substance Painter는 TIFF를 기본값으로 ZIP(Deflate) 압축하여 export한다.
+압축된 TIFF에서 픽셀 하나만 수정해도 delta가 100%가 나오는 이유:
+ 
+```
+비압축 TIFF:  [픽셀 배열 그대로]
+              → 수정된 픽셀 위치만 달라짐 → CDC가 변경 블록 탐지 가능
+ 
+압축 TIFF:    [픽셀 배열 → ZIP 압축 → 압축된 바이트 스트림]
+              → 픽셀 하나 변경 → 압축 블록 전체 재생성
+              → 파일 전체 바이트 패턴이 달라짐 → CDC 블록 매칭 실패
+```
+ 
+즉 압축 알고리즘 특성상 입력이 조금만 달라져도 출력이 완전히 달라지므로,
+delta 엔진(CDC)이 이전 버전과의 공통 블록을 찾지 못하고 전체를 INSERT 처리한다.
  
 Substance Painter 기본 export = ZIP 압축 TIFF. 기존에는 수동 압축 해제 필요.
  
