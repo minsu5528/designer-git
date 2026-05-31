@@ -26,7 +26,7 @@
 
 [논문: "FastCDC: A Fast and Efficient Content-Defined Chunking Approach for Data Deduplication", USENIX ATC 2016]
 
-Wen Xia 외 다수가 저술하여 2016 USENIX Annual Technical Conference(pp. 101–114)에서 발표한 정식 학술 논문이다. Content-Defined Chunking(CDC)이 데이터 중복 제거 시스템에서 15년 이상 핵심 역할을 해왔음을 배경으로, 기존 Rabin 기반 CDC의 문제점과 개선 방향을 제시한다.
+Wen Xia 외 다수가 저술하여 2016 USENIX Annual Technical Conference(pp. 101–114)에서 발표한 정식 학술 논문이다. Content-Defined Chunking(CDC)이 데이터 중복 제거 시스템에서 2016년 발표 당시 기준 약 15년간 핵심 역할을 해왔음을 배경으로, 기존 Rabin 기반 CDC의 문제점과 개선 방향을 제시한다.
 
 기존 Rabin CDC는 바이트 단위로 rolling hash를 계산하고 판별하는 과정에서 CPU 오버헤드가 크다. 이 논문은 (1) hash judgment 단순화, (2) 최소 청크 크기 이하 구간의 cut-point skipping, (3) 청크 크기 분포 정규화 세 가지 기법을 결합한 FastCDC를 제안한다. 8KB·16KB 등 다양한 평균 청크 크기별 중복 제거율과 처리 속도를 실측 비교 데이터(표 형식)로 제시하며, Rabin 기반 CDC(RC), Gear 기반 CDC(GC), FastCDC(FC) 세 가지를 직접 비교한다.
 
@@ -36,17 +36,15 @@ designer_git이 Rabin 기반 CDC를 선택한 이유, 블록 크기 16KB 설정 
 
 [논문 (arXiv 프리프린트): "A Thorough Investigation of Content-Defined Chunking Algorithms for Data Deduplication", arXiv:2409.06066, 2024]
 
-IEEE 제출 중인 CDC 알고리즘 종합 비교 서베이 논문이다. Rabin, FastCDC, AE, LMC 등 주요 CDC 알고리즘들을 hashing 기반과 hash-less 방식으로 분류하고 성능을 체계적으로 비교한다. Rabin fingerprinting이 CDC의 최초 주요 구현임을 정리하고, 청크 크기 분산·연산 오버헤드·바이트 시프팅 문제 등 알고리즘별 한계를 다룬다.
+IEEE Transactions on Cloud Computing 제출본, arXiv:2409.06066 (2024) CDC 알고리즘 종합 비교 서베이 논문이다. Rabin, FastCDC, AE, LMC 등 주요 CDC 알고리즘들을 hashing 기반과 hash-less 방식으로 분류하고 성능을 체계적으로 비교한다. Rabin fingerprinting이 CDC의 최초 주요 구현임을 정리하고, 청크 크기 분산·연산 오버헤드·바이트 시프팅 문제 등 알고리즘별 한계를 다룬다.
 
 ⚠ 정식 출판 전 arXiv 프리프린트 상태로, 동료 심사(peer review)가 완료되지 않았다. 인용 시 반드시 "arXiv preprint, 2024, 정식 출판 미완료"로 명시해야 한다. 발표 Q&A에서 이 자료를 언급할 경우 프리프린트임을 인지하고 있어야 한다.
 
 ---
 
-[논문: "Accelerating Content-Defined-Chunking Based Data Deduplication by Exploiting Parallelism", Future Generation Computer Systems, 2019]
+[논문: "Accelerating Content-Defined-Chunking based Data Deduplication by Exploiting Parallelism", Future Generation Computer Systems, 2019]
 
-Elsevier 저널 Future Generation Computer Systems(vol. 96, pp. 142–153)에 게재된 정식 논문이다. Rabin, Adler, Gear 세 가지 CDC 알고리즘을 동일 조건에서 실측 비교한 데이터를 포함한다. quad-core Intel i7-4770 프로세서 기준으로 CDC 병렬화를 통해 처리량을 3~4배 향상시키면서 중복 제거율은 0.02% 미만 감소함을 실험으로 증명했다. CDC 연산이 deduplication 파이프라인의 병목임을 정량적으로 보여준다.
-
-향후 멀티스레딩 최적화 적용 시 예상 효과(벤치마크 목표치 미달 시 플랜 B)를 뒷받침하는 근거 자료로 활용할 수 있다.
+Elsevier 저널 Future Generation Computer Systems(vol. 98, pp. 406–418)에 게재된 정식 논문이다. CDC 기반 중복 제거 파이프라인(chunking → fingerprinting → indexing → writing)에서 chunking과 fingerprinting 단계가 CPU 연산 병목임을 규명하고, 이를 해결하는 P-Dedupe 시스템을 제안한다. MapReduce 모델에서 착안하여 데이터 스트림을 여러 세그먼트로 분할(Map)한 뒤 각 세그먼트를 독립 스레드로 병렬 CDC 처리하고, 세그먼트 경계를 재청킹·병합(Reduce)하여 순차 CDC와 거의 동일한 청킹 효과를 유지한다. quad-core Intel i7 프로세서 기반 8개 데이터셋 실험에서 처리량이 코어 수에 거의 선형으로 향상되면서 중복 제거율 감소는 0.02%에 불과함을 실증했다. designer_git이 구현한 Producer-Consumer 멀티스레딩 기반 CDC 병렬처리의 선행 연구로 참고할 수 있다.
 
 ---
 
@@ -60,7 +58,7 @@ GitLab 공식 문서로, Git이 바이너리 파일을 처리하는 구조적 �
 
 [공식문서: "Work with large files in your Git repo", Microsoft Azure DevOps Documentation, 2024]
 
-Microsoft Azure Repos 공식 문서로, 엔터프라이즈 환경에서 Git LFS 사용 시 발생하는 실질적 제약을 공식적으로 명시한다. 바이너리 에셋 작업 전 항상 최신본을 pull해야 하는 협업 제약, SSH 미지원 등의 한계가 문서화되어 있다. 소스 파일과 바이너리 의존성을 별도로 관리하도록 권고하는 등 Git LFS가 바이너리 버전관리의 완전한 해결책이 아님을 공식적으로 인정한다.
+Microsoft Azure Repos 공식 문서로, 엔터프라이즈 환경에서 Git LFS 사용 시 발생하는 실질적 제약을 공식적으로 명시한다. 바이너리 에셋 작업 전 항상 최신본을 pull해야 하는 협업 제약 등의 한계가 문서화되어 있다. 소스 파일과 바이너리 의존성을 별도로 관리하도록 권고하는 등 Git LFS가 바이너리 버전관리의 완전한 해결책이 아님을 공식적으로 인정한다.
 
 ---
 
@@ -68,8 +66,8 @@ Microsoft Azure Repos 공식 문서로, 엔터프라이즈 환경에서 Git LFS 
 
 - Tridgell, A., Mackerras, P., "The rsync algorithm", Technical Report TR-CS-96-05, Department of Computer Science, Australian National University, 1996. https://www.samba.org/rsync/tech_report/
 - Gessler, A., "FBX binary file format specification", Blender Foundation, published as public domain information, 2013. https://code.blender.org/2013/08/fbx-binary-file-format-specification/
-- Xia, W., Zhou, Y., Jiang, H., Feng, D., Hua, Y., Hu, Y., Liu, Q., Zhang, Y., "FastCDC: A Fast and Efficient Content-Defined Chunking Approach for Data Deduplication", in Proceedings of 2016 USENIX Annual Technical Conference (USENIX ATC '16), Denver, CO, pp. 101–114, 2016.
+- Xia, W., Zhou, Y., Jiang, H., Feng, D., Hua, Y., Hu, Y., Zhang, Y., Liu, Q., "FastCDC: A Fast and Efficient Content-Defined Chunking Approach for Data Deduplication", in Proceedings of 2016 USENIX Annual Technical Conference (USENIX ATC '16), Denver, CO, pp. 101–114, 2016.
 - (2024). "A Thorough Investigation of Content-Defined Chunking Algorithms for Data Deduplication", arXiv preprint arXiv:2409.06066. (정식 출판 미완료)
-- Luo, T., et al., "Accelerating Content-Defined-Chunking Based Data Deduplication by Exploiting Parallelism", Future Generation Computer Systems, vol. 96, pp. 142–153, Elsevier, 2019.
+- Xia, W., Feng, D., Jiang, H., Zhang, Y., Zou, X., & Chang, V., "Accelerating content-defined-chunking based data deduplication by exploiting parallelism", Future Generation Computer Systems, vol. 98, pp. 406–418, Elsevier, 2019. DOI: 10.1016/j.future.2019.02.008
 - GitLab Documentation, "Git Large File Storage (LFS)", 2024. https://docs.gitlab.com/topics/git/lfs
 - Microsoft Learn / Azure Repos, "Work with large files in your Git repo", 2024. https://learn.microsoft.com/en-us/azure/devops/repos/git/manage-large-files
